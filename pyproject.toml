@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "marker-analyser"
+version = "0.1.0"
+description = "A package for loading and basic analysis of optical tweezer marker data."
+authors = [{ name = "Sylvia Whittle", email = "sylviwhittle@gmail.com" }]
+license = { file = "LICENSE" }
+dependencies = [
+    "numpy",
+    "matplotlib",
+    "lumicks.pylake",
+]
+readme = "README.md"
+
+# add an entry point when needed
+# [project.scripts]
+# markeranalyser = "marker_analyser.entry_point:entry_point"
+
