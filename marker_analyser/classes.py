@@ -36,6 +36,13 @@ class ReducedFDCurveModel(BaseModel):
     oscillations: list[OscillationModel] | None = None
     include_in_processing: bool = True
 
+
+class MattMarkerMetadataModel(BaseModel):
+    """A data object to hold metadata for Matt's markers."""
+
+    protein_name: str
+    concentration_nM: float
+    telereps: int
         # Note that lumicks does not seem to close files after reading them, it will need to be closed manually.
         # This can be done with lumicks_file.h5.close().
         lumicks_file = pylake.File(self.file_path)
