@@ -7,9 +7,13 @@ from lumicks import pylake
 
 
 class ReducedMarker:
-    def __init__(self, file_path: Path, verbose: bool = False, plotting: bool = False):
-        self.file_path = file_path
-        self.file_name = file_path.name
+class ForcePeakModel(BaseModel):
+    """A data object to hold force peak data."""
+
+    distance: float
+    force: float
+    index: int
+
         # Note that lumicks does not seem to close files after reading them, it will need to be closed manually.
         # This can be done with lumicks_file.h5.close().
         lumicks_file = pylake.File(self.file_path)
