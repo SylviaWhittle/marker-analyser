@@ -24,6 +24,18 @@ class OscillationModel(BaseModel):
     decreasing_distance: npt.NDArray[np.float64]
     force_peaks: list[ForcePeakModel] | None = None
     num_peaks: int | None = None
+
+
+class ReducedFDCurveModel(BaseModel):
+    """A data object to hold reduced force-distance curve data."""
+
+    filename: str
+    curve_id: str
+    all_forces: npt.NDArray[np.float64]
+    all_distances: npt.NDArray[np.float64]
+    oscillations: list[OscillationModel] | None = None
+    include_in_processing: bool = True
+
         # Note that lumicks does not seem to close files after reading them, it will need to be closed manually.
         # This can be done with lumicks_file.h5.close().
         lumicks_file = pylake.File(self.file_path)
