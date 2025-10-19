@@ -14,6 +14,16 @@ class ForcePeakModel(BaseModel):
     force: float
     index: int
 
+
+class OscillationModel(BaseModel):
+    """A data object to hold oscillation data."""
+
+    increasing_force: npt.NDArray[np.float64]
+    increasing_distance: npt.NDArray[np.float64]
+    decreasing_force: npt.NDArray[np.float64]
+    decreasing_distance: npt.NDArray[np.float64]
+    force_peaks: list[ForcePeakModel] | None = None
+    num_peaks: int | None = None
         # Note that lumicks does not seem to close files after reading them, it will need to be closed manually.
         # This can be done with lumicks_file.h5.close().
         lumicks_file = pylake.File(self.file_path)
