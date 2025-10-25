@@ -6,6 +6,9 @@ import re
 from pydantic import BaseModel
 import numpy as np
 import numpy.typing as npt
+
+# lumicks doesn't provide type stubs, so have ignored mypy warnings for missing imports in the mypy arguments in
+# settings.
 from lumicks import pylake
 from skimage.morphology import label
 
