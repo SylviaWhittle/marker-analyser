@@ -5,6 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "marker-analyser"
 version = "0.1.0"
+requires-python = ">=3.11"
 description = "A package for loading and basic analysis of optical tweezer marker data."
 authors = [{ name = "Sylvia Whittle", email = "sylviwhittle@gmail.com" }]
 license = { file = "LICENSE" }
