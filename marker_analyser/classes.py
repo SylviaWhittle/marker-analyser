@@ -3,7 +3,7 @@
 from pathlib import Path
 
 import re
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 import numpy as np
 import numpy.typing as npt
 
@@ -13,7 +13,13 @@ from lumicks import pylake
 from skimage.morphology import label
 
 
-class ForcePeakModel(BaseModel):
+class MarkerAnalysisBaseModel(BaseModel):
+    """Data object to hold settings for Models used in the project."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+
+class ForcePeakModel(MarkerAnalysisBaseModel):
     """A data object to hold force peak data."""
 
     distance: float
@@ -21,7 +27,7 @@ class ForcePeakModel(BaseModel):
     index: int
 
 
-class OscillationModel(BaseModel):
+class OscillationModel(MarkerAnalysisBaseModel):
     """A data object to hold oscillation data."""
 
     increasing_force: npt.NDArray[np.float64]
@@ -32,7 +38,7 @@ class OscillationModel(BaseModel):
     num_peaks: int | None = None
 
 
-class ReducedFDCurveModel(BaseModel):
+class ReducedFDCurveModel(MarkerAnalysisBaseModel):
     """A data object to hold reduced force-distance curve data."""
 
     filename: str
@@ -43,7 +49,7 @@ class ReducedFDCurveModel(BaseModel):
     include_in_processing: bool = True
 
 
-class MattMarkerMetadataModel(BaseModel):
+class MattMarkerMetadataModel(MarkerAnalysisBaseModel):
     """A data object to hold metadata for Matt's markers."""
 
     protein_name: str
@@ -51,7 +57,7 @@ class MattMarkerMetadataModel(BaseModel):
     telereps: int
 
 
-class ReducedMarkerModel(BaseModel):
+class ReducedMarkerModel(MarkerAnalysisBaseModel):
     """A data object to hold marker data in a reduced form."""
 
     file_path: Path
@@ -109,7 +115,9 @@ class ReducedMarkerModel(BaseModel):
         if tel_reps_match:
             tel_reps = int(tel_reps_match.group(1))
         else:
-            raise ValueError(f"Could not find telereps regex: Tel(\\d+) in file name {filename}")
+            raise ValueError(
+                f"Could not find telereps regex: Tel(\\d+) in file name {filename}"
+            )
         # grab concentration, assumed to be the float before a "nM".
         concentration_match = re.search(r"(\d+\.?\d*)nM", filename)
         if concentration_match:
@@ -158,24 +166,34 @@ class ReducedMarkerModel(BaseModel):
         fd_curves: dict[str, ReducedFDCurveModel] = {}
         for curve_id, curve_data in pylake_file_fd_curves.items():
             if verbose:
-                print(f"Loading curve {curve_id} with {len(curve_data.d.data)} data points")
+                print(
+                    f"Loading curve {curve_id} with {len(curve_data.d.data)} data points"
+                )
             force_data: npt.NDArray[np.float64] = curve_data.f.data
-            distance_data: npt.NDArray[np.float64] = np.asarray(curve_data.d.data, dtype=np.float64)
+            distance_data: npt.NDArray[np.float64] = np.asarray(
+                curve_data.d.data, dtype=np.float64
+            )
 
             # Determine starting distance to be the first peak in frequency of the distance data
             bin_size_um = 0.1
-            bin_edges = np.arange(np.min(distance_data), np.max(distance_data) + bin_size_um, bin_size_um)
+            bin_edges = np.arange(
+                np.min(distance_data), np.max(distance_data) + bin_size_um, bin_size_um
+            )
             hist, _ = np.histogram(distance_data, bins=bin_edges)
 
             # find the largest peak in the histogram
             peak_index = np.argmax(hist)
             # get the midpoint of the bin
-            base_distance: np.float64 = (bin_edges[peak_index] + bin_edges[peak_index + 1]) / 2
+            base_distance: np.float64 = (
+                bin_edges[peak_index] + bin_edges[peak_index + 1]
+            ) / 2
 
             # check that the peak is strong, as in that the peak contains a lot more counts than the other bins
             # criteria: peak should be at least 2x the next highest bin
             next_highest_bin = np.partition(hist, kth=-2)[-2]
-            peak_strength = hist[peak_index] / next_highest_bin if next_highest_bin > 0 else 0
+            peak_strength = (
+                hist[peak_index] / next_highest_bin if next_highest_bin > 0 else 0
+            )
             peak_strength_threshold = 2.0
             if peak_strength < peak_strength_threshold:
                 print(
@@ -199,7 +217,9 @@ class ReducedMarkerModel(BaseModel):
                     flat_regions.append((current_flat_region_start, index - 1))
                     current_flat_region_start = None
             if current_flat_region_start is not None:
-                flat_regions.append((current_flat_region_start, len(flat_regions_bool) - 1))
+                flat_regions.append(
+                    (current_flat_region_start, len(flat_regions_bool) - 1)
+                )
 
             # eliminate non-flat regions at the start and end of the curve
             if flat_regions:
@@ -213,9 +233,13 @@ class ReducedMarkerModel(BaseModel):
                     force_data_trimmed = force_data
                     flat_regions_bool_trimmed = flat_regions_bool
                 if flat_regions[-1][1] < len(distance_data_trimmed) - 1:
-                    distance_data_trimmed = distance_data_trimmed[: flat_regions[-1][1] + 1]
+                    distance_data_trimmed = distance_data_trimmed[
+                        : flat_regions[-1][1] + 1
+                    ]
                     force_data_trimmed = force_data_trimmed[: flat_regions[-1][1] + 1]
-                    flat_regions_bool_trimmed = flat_regions_bool_trimmed[: flat_regions[-1][1] + 1]
+                    flat_regions_bool_trimmed = flat_regions_bool_trimmed[
+                        : flat_regions[-1][1] + 1
+                    ]
             else:
                 distance_data_trimmed = distance_data
                 force_data_trimmed = force_data
@@ -224,32 +248,48 @@ class ReducedMarkerModel(BaseModel):
             # get the non-flat regions
             non_flat_regions_bool_trimmed = ~flat_regions_bool_trimmed
             # label them
-            labelled_non_flat_regions: npt.NDArray[np.int32] = label(non_flat_regions_bool_trimmed)
+            labelled_non_flat_regions: npt.NDArray[np.int32] = label(
+                non_flat_regions_bool_trimmed
+            )
             oscillations: list[OscillationModel] = []
             for label_index in range(1, np.max(labelled_non_flat_regions) + 1):
                 # get indexes of the current non-flat region
-                non_flat_region_indexes = np.where(labelled_non_flat_regions == label_index)
+                non_flat_region_indexes = np.where(
+                    labelled_non_flat_regions == label_index
+                )
                 non_flat_region_start = non_flat_region_indexes[0][0]
                 non_flat_region_end = non_flat_region_indexes[0][-1]
-                non_flat_region_distances = distance_data_trimmed[non_flat_region_start : non_flat_region_end + 1]
-                non_flat_region_local_maximum_distance_index = np.argmax(non_flat_region_distances)
+                non_flat_region_distances = distance_data_trimmed[
+                    non_flat_region_start : non_flat_region_end + 1
+                ]
+                non_flat_region_local_maximum_distance_index = np.argmax(
+                    non_flat_region_distances
+                )
                 non_flat_region_global_maximum_distance_index = (
                     non_flat_region_start + non_flat_region_local_maximum_distance_index
                 )
                 # set the increasing segment to the left of the maximum index, with the second index being exclusive
                 increasing_segment_start_index = non_flat_region_start
                 # keep the largest distsance value in the increasing segment
-                increasing_segment_end_index = non_flat_region_global_maximum_distance_index + 1
+                increasing_segment_end_index = (
+                    non_flat_region_global_maximum_distance_index + 1
+                )
                 # set the decreasing segment to the right of the maximum distance index, with the second index
                 # being exclusive
-                decreasing_segment_start_index = non_flat_region_global_maximum_distance_index + 1
+                decreasing_segment_start_index = (
+                    non_flat_region_global_maximum_distance_index + 1
+                )
                 decreasing_segment_end_index = non_flat_region_end + 1
                 # get the force data for the increasing and decresaing segments
-                increasing_force = force_data_trimmed[increasing_segment_start_index:increasing_segment_end_index]
+                increasing_force = force_data_trimmed[
+                    increasing_segment_start_index:increasing_segment_end_index
+                ]
                 increasing_distance = distance_data_trimmed[
                     increasing_segment_start_index:increasing_segment_end_index
                 ]
-                decreasing_force = force_data_trimmed[decreasing_segment_start_index:decreasing_segment_end_index]
+                decreasing_force = force_data_trimmed[
+                    decreasing_segment_start_index:decreasing_segment_end_index
+                ]
                 decreasing_distance = distance_data_trimmed[
                     decreasing_segment_start_index:decreasing_segment_end_index
                 ]
