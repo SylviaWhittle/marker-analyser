@@ -1,4 +1,4 @@
-"""classes and dataclasses for data storage and handling"""
+"""Classes and dataclasses for data storage and handling."""
 
 from pathlib import Path
 
@@ -70,7 +70,22 @@ class ReducedMarkerModel(MarkerAnalysisBaseModel):
 
     @classmethod
     def from_file(cls, file_path: Path, verbose: bool = False) -> "ReducedMarkerModel":
-        """Factory method to create ReducedMarkerModel from a file."""
+        """
+        Factory method to create ReducedMarkerModel from a file.
+
+        Parameters
+        ----------
+        file_path : Path
+            The path to the file to load the data from.
+        verbose : bool, optional
+            If True, print additional information during loading. Default is False.
+
+        Returns
+        -------
+        ReducedMarkerModel
+            An instance of ReducedMarkerModel containing the loaded data.
+        """
+
         file_name = file_path.name
         # Note that lumicks does not seem to close files after reading them, it will need to be closed manually.
         # This can be done with lumicks_file.h5.close().
@@ -209,7 +224,24 @@ class ReducedMarkerModel(MarkerAnalysisBaseModel):
     def _calculate_fd_curve_starting_distance(
         distance_data: npt.NDArray[np.float64], curve_id: str = "undefined", filename: str = "undefined"
     ) -> np.float64 | None:
-        """Calculate the starting distance of a force-distance curve, for being able to identify stationary regions."""
+        """
+        Calculate the starting distance of a force-distance curve, for being able to identify stationary regions.
+
+        Parameters
+        ----------
+        distance_data : npt.NDArray[np.float64]
+            The distance data of the force-distance curve.
+        curve_id : str, optional
+            The ID of the curve, used for logging purposes. Default is "undefined".
+        filename : str, optional
+            The name of the file containing the curve, used for logging purposes. Default is "undefined".
+
+        Returns
+        -------
+        np.float64 | None
+            The starting distance of the curve, or None if it could not be determined.
+        """
+
         # Determine starting distance to be the first peak in frequency of the distance data
         bin_size_um = 0.1
         bin_edges = np.arange(np.min(distance_data), np.max(distance_data) + bin_size_um, bin_size_um)
@@ -239,7 +271,24 @@ class ReducedMarkerModel(MarkerAnalysisBaseModel):
         force_data: npt.NDArray[np.float64],
         flat_distance_um: np.float64,
     ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.bool_]]:
-        """Trim non-flat regions from the ends of a force-distance curve."""
+        """
+        Trim non-flat regions from the ends of a force-distance curve.
+
+        Parameters
+        ----------
+        distance_data : npt.NDArray[np.float64]
+            The distance data of the force-distance curve.
+        force_data : npt.NDArray[np.float64]
+            The force data of the force-distance curve.
+        flat_distance_um : np.float64
+            The distance value that represents the flat region.
+
+        Returns
+        -------
+        tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.bool_]]
+            A tuple containing the trimmed distance data, trimmed force data, and a boolean array indicating flat
+            regions.
+        """
         flat_distance_tolerance_um = 0.1
         flat_regions_bool: npt.NDArray[np.bool_] = np.abs(distance_data - flat_distance_um) < flat_distance_tolerance_um
         flat_regions: list[tuple[int, int]] = []
@@ -282,9 +331,26 @@ class ReducedMarkerModel(MarkerAnalysisBaseModel):
         force_data: npt.NDArray[np.float64],
         flat_regions_bool: npt.NDArray[np.bool_],
     ) -> list[OscillationModel]:
-        """Extract oscillations from trimmed force-distance curve data.
+        """
+        Extract oscillations from trimmed force-distance curve data.
 
-        Note: There must be no non-flat regions at the start or end of the data.
+        Parameters
+        ----------
+        distance_data : npt.NDArray[np.float64]
+            The distance data of the force-distance curve.
+        force_data : npt.NDArray[np.float64]
+            The force data of the force-distance curve.
+        flat_regions_bool : npt.NDArray[np.bool_]
+            A boolean array indicating flat regions in the distance data.
+
+        Returns
+        -------
+        list[OscillationModel]
+            A list of OscillationModel instances representing the extracted oscillations.
+
+        Notes
+        -----
+        There must be no non-flat regions at the start or end of the data.
         """
         non_flat_regions_bool = ~flat_regions_bool
         labelled_non_flat_regions: npt.NDArray[np.int32] = label(non_flat_regions_bool)
