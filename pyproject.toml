@@ -68,6 +68,27 @@ exclude = [
 # per-file-ignores = []
 line-length = 120
 
+[tool.numpydoc_validation]
+checks = [
+  "all", # Perform all check except those listed below
+  "ES01", # Missing extended summary
+  "EX01", # Missing examples section
+  "PR10", # Conflicts with black formatting
+  "SA01", # Missing See Also section
+]
+exclude = [  # don't report on objects that match any of these regex
+    "\\.undocumented_method$",
+    "\\.__repr__$",
+    "^test_",
+    "^conftest",
+    "^conf$",
+]
+override_SS05 = [  # override SS05 to allow docstrings starting with these words
+    "^Process ",
+    "^Assess ",
+    "^Access ",
+]
+
 # add an entry point when needed
 # [project.scripts]
 # markeranalyser = "marker_analyser.entry_point:entry_point"
