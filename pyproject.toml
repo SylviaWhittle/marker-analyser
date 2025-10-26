@@ -40,6 +40,34 @@ exclude = '''
 )
 '''
 
+[tool.ruff]
+exclude = [
+  "*.ipynb",
+  ".bzr",
+  ".direnv",
+  ".eggs",
+  ".git",
+  ".hg",
+  ".mypy_cache",
+  ".nox",
+  ".pants.d",
+  ".pytype",
+  ".ruff_cache",
+  ".svn",
+  ".tox",
+  ".venv",
+  "__pycache__",
+  "__pypackages__",
+  "_build",
+  "buck-out",
+  "build",
+  "dist",
+  "docs/conf.py",
+  "venv",
+]
+# per-file-ignores = []
+line-length = 120
+
 # add an entry point when needed
 # [project.scripts]
 # markeranalyser = "marker_analyser.entry_point:entry_point"
