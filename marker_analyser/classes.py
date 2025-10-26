@@ -115,9 +115,7 @@ class ReducedMarkerModel(MarkerAnalysisBaseModel):
         if tel_reps_match:
             tel_reps = int(tel_reps_match.group(1))
         else:
-            raise ValueError(
-                f"Could not find telereps regex: Tel(\\d+) in file name {filename}"
-            )
+            raise ValueError(f"Could not find telereps regex: Tel(\\d+) in file name {filename}")
         # grab concentration, assumed to be the float before a "nM".
         concentration_match = re.search(r"(\d+\.?\d*)nM", filename)
         if concentration_match:
@@ -137,7 +135,6 @@ class ReducedMarkerModel(MarkerAnalysisBaseModel):
             telereps=tel_reps,
         )
 
-    # TODO: Break this function up into smaller responsibilities
     @staticmethod
     def load_fd_curves(
         filename: str,
@@ -166,141 +163,38 @@ class ReducedMarkerModel(MarkerAnalysisBaseModel):
         fd_curves: dict[str, ReducedFDCurveModel] = {}
         for curve_id, curve_data in pylake_file_fd_curves.items():
             if verbose:
-                print(
-                    f"Loading curve {curve_id} with {len(curve_data.d.data)} data points"
-                )
+                print(f"Loading curve {curve_id} with {len(curve_data.d.data)} data points")
             force_data: npt.NDArray[np.float64] = curve_data.f.data
-            distance_data: npt.NDArray[np.float64] = np.asarray(
-                curve_data.d.data, dtype=np.float64
-            )
+            distance_data: npt.NDArray[np.float64] = np.asarray(curve_data.d.data, dtype=np.float64)
 
-            # Determine starting distance to be the first peak in frequency of the distance data
-            bin_size_um = 0.1
-            bin_edges = np.arange(
-                np.min(distance_data), np.max(distance_data) + bin_size_um, bin_size_um
+            # calculate the starting distance to identify flat regions
+            flat_distance_um = ReducedMarkerModel._calculate_fd_curve_starting_distance(
+                distance_data=distance_data,
+                curve_id=curve_id,
+                filename=filename,
             )
-            hist, _ = np.histogram(distance_data, bins=bin_edges)
-
-            # find the largest peak in the histogram
-            peak_index = np.argmax(hist)
-            # get the midpoint of the bin
-            base_distance: np.float64 = (
-                bin_edges[peak_index] + bin_edges[peak_index + 1]
-            ) / 2
-
-            # check that the peak is strong, as in that the peak contains a lot more counts than the other bins
-            # criteria: peak should be at least 2x the next highest bin
-            next_highest_bin = np.partition(hist, kth=-2)[-2]
-            peak_strength = (
-                hist[peak_index] / next_highest_bin if next_highest_bin > 0 else 0
-            )
-            peak_strength_threshold = 2.0
-            if peak_strength < peak_strength_threshold:
-                print(
-                    f"Warning: Peak strength for curve {curve_id} in file {filename} is low"
-                    f"({peak_strength:.2f}<{peak_strength_threshold})."
-                )
+            if flat_distance_um is None:
+                # skip this curve
+                if verbose:
+                    print(f"Skipping curve {curve_id} due to inability to determine starting distance.")
                 continue
 
-            flat_distance_um = base_distance
-            flat_distance_tolerance_um = 0.1
-
-            flat_regions_bool: npt.NDArray[np.bool_] = (
-                np.abs(distance_data - flat_distance_um) < flat_distance_tolerance_um
+            # trim non-flat regions from the ends of the curve
+            distance_data_trimmed, force_data_trimmed, flat_regions_bool_trimmed = (
+                ReducedMarkerModel._trim_non_flat_regions_from_ends_of_curve(
+                    distance_data=distance_data,
+                    force_data=force_data,
+                    flat_distance_um=flat_distance_um,
+                )
             )
-            flat_regions: list[tuple[int, int]] = []
-            current_flat_region_start: int | None = None
-            for index, is_flat in enumerate(flat_regions_bool):
-                if is_flat and current_flat_region_start is None:
-                    current_flat_region_start = index
-                elif not is_flat and current_flat_region_start is not None:
-                    flat_regions.append((current_flat_region_start, index - 1))
-                    current_flat_region_start = None
-            if current_flat_region_start is not None:
-                flat_regions.append(
-                    (current_flat_region_start, len(flat_regions_bool) - 1)
-                )
 
-            # eliminate non-flat regions at the start and end of the curve
-            if flat_regions:
-                if flat_regions[0][0] > 0:
-                    # cut the array to start at the first flat region
-                    distance_data_trimmed = distance_data[flat_regions[0][0] :]
-                    force_data_trimmed = force_data[flat_regions[0][0] :]
-                    flat_regions_bool_trimmed = flat_regions_bool[flat_regions[0][0] :]
-                else:
-                    distance_data_trimmed = distance_data
-                    force_data_trimmed = force_data
-                    flat_regions_bool_trimmed = flat_regions_bool
-                if flat_regions[-1][1] < len(distance_data_trimmed) - 1:
-                    distance_data_trimmed = distance_data_trimmed[
-                        : flat_regions[-1][1] + 1
-                    ]
-                    force_data_trimmed = force_data_trimmed[: flat_regions[-1][1] + 1]
-                    flat_regions_bool_trimmed = flat_regions_bool_trimmed[
-                        : flat_regions[-1][1] + 1
-                    ]
-            else:
-                distance_data_trimmed = distance_data
-                force_data_trimmed = force_data
-                flat_regions_bool_trimmed = flat_regions_bool
-
-            # get the non-flat regions
-            non_flat_regions_bool_trimmed = ~flat_regions_bool_trimmed
-            # label them
-            labelled_non_flat_regions: npt.NDArray[np.int32] = label(
-                non_flat_regions_bool_trimmed
+            # extract oscillations from the trimmed data
+            oscillations = ReducedMarkerModel._extract_oscillations_from_trimmed_data(
+                distance_data=distance_data_trimmed,
+                force_data=force_data_trimmed,
+                flat_regions_bool=flat_regions_bool_trimmed,
             )
-            oscillations: list[OscillationModel] = []
-            for label_index in range(1, np.max(labelled_non_flat_regions) + 1):
-                # get indexes of the current non-flat region
-                non_flat_region_indexes = np.where(
-                    labelled_non_flat_regions == label_index
-                )
-                non_flat_region_start = non_flat_region_indexes[0][0]
-                non_flat_region_end = non_flat_region_indexes[0][-1]
-                non_flat_region_distances = distance_data_trimmed[
-                    non_flat_region_start : non_flat_region_end + 1
-                ]
-                non_flat_region_local_maximum_distance_index = np.argmax(
-                    non_flat_region_distances
-                )
-                non_flat_region_global_maximum_distance_index = (
-                    non_flat_region_start + non_flat_region_local_maximum_distance_index
-                )
-                # set the increasing segment to the left of the maximum index, with the second index being exclusive
-                increasing_segment_start_index = non_flat_region_start
-                # keep the largest distsance value in the increasing segment
-                increasing_segment_end_index = (
-                    non_flat_region_global_maximum_distance_index + 1
-                )
-                # set the decreasing segment to the right of the maximum distance index, with the second index
-                # being exclusive
-                decreasing_segment_start_index = (
-                    non_flat_region_global_maximum_distance_index + 1
-                )
-                decreasing_segment_end_index = non_flat_region_end + 1
-                # get the force data for the increasing and decresaing segments
-                increasing_force = force_data_trimmed[
-                    increasing_segment_start_index:increasing_segment_end_index
-                ]
-                increasing_distance = distance_data_trimmed[
-                    increasing_segment_start_index:increasing_segment_end_index
-                ]
-                decreasing_force = force_data_trimmed[
-                    decreasing_segment_start_index:decreasing_segment_end_index
-                ]
-                decreasing_distance = distance_data_trimmed[
-                    decreasing_segment_start_index:decreasing_segment_end_index
-                ]
 
-                oscillation = OscillationModel(
-                    increasing_force=increasing_force,
-                    increasing_distance=increasing_distance,
-                    decreasing_force=decreasing_force,
-                    decreasing_distance=decreasing_distance,
-                )
-                oscillations.append(oscillation)
             fd_curve = ReducedFDCurveModel(
                 filename=filename,
                 curve_id=curve_id,
@@ -310,3 +204,119 @@ class ReducedMarkerModel(MarkerAnalysisBaseModel):
             )
             fd_curves[curve_id] = fd_curve
         return fd_curves
+
+    @staticmethod
+    def _calculate_fd_curve_starting_distance(
+        distance_data: npt.NDArray[np.float64], curve_id: str = "undefined", filename: str = "undefined"
+    ) -> np.float64 | None:
+        """Calculate the starting distance of a force-distance curve, for being able to identify stationary regions."""
+        # Determine starting distance to be the first peak in frequency of the distance data
+        bin_size_um = 0.1
+        bin_edges = np.arange(np.min(distance_data), np.max(distance_data) + bin_size_um, bin_size_um)
+        hist, _ = np.histogram(distance_data, bins=bin_edges)
+
+        # find the largest peak in the histogram
+        peak_index = np.argmax(hist)
+        # get the midpoint of the bin
+        base_distance: np.float64 = (bin_edges[peak_index] + bin_edges[peak_index + 1]) / 2
+
+        # check that the peak is strong, as in that the peak contains a lot more counts than the other bins
+        # criteria: peak should be at least 2x the next highest bin
+        next_highest_bin = np.partition(hist, kth=-2)[-2]
+        peak_strength = hist[peak_index] / next_highest_bin if next_highest_bin > 0 else 0
+        peak_strength_threshold = 2.0
+        if peak_strength < peak_strength_threshold:
+            print(
+                f"Warning: Peak strength for curve {curve_id} in file {filename} is low"
+                f"({peak_strength:.2f}<{peak_strength_threshold})."
+            )
+            return None
+        return base_distance
+
+    @staticmethod
+    def _trim_non_flat_regions_from_ends_of_curve(
+        distance_data: npt.NDArray[np.float64],
+        force_data: npt.NDArray[np.float64],
+        flat_distance_um: np.float64,
+    ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.bool_]]:
+        """Trim non-flat regions from the ends of a force-distance curve."""
+        flat_distance_tolerance_um = 0.1
+        flat_regions_bool: npt.NDArray[np.bool_] = np.abs(distance_data - flat_distance_um) < flat_distance_tolerance_um
+        flat_regions: list[tuple[int, int]] = []
+        current_flat_region_start: int | None = None
+        for index, is_flat in enumerate(flat_regions_bool):
+            if is_flat and current_flat_region_start is None:
+                current_flat_region_start = index
+            elif not is_flat and current_flat_region_start is not None:
+                flat_regions.append((current_flat_region_start, index - 1))
+                current_flat_region_start = None
+        if current_flat_region_start is not None:
+            flat_regions.append((current_flat_region_start, len(flat_regions_bool) - 1))
+
+        # eliminate non-flat regions at the start and end of the curve
+        if flat_regions:
+            if flat_regions[0][0] > 0:
+                # cut the array to start at the first flat region
+                distance_data_trimmed = distance_data[flat_regions[0][0] :]
+                force_data_trimmed = force_data[flat_regions[0][0] :]
+                flat_regions_bool_trimmed = flat_regions_bool[flat_regions[0][0] :]
+            else:
+                distance_data_trimmed = distance_data
+                force_data_trimmed = force_data
+                flat_regions_bool_trimmed = flat_regions_bool
+            if flat_regions[-1][1] < len(distance_data_trimmed) - 1:
+                distance_data_trimmed = distance_data_trimmed[: flat_regions[-1][1] + 1]
+                force_data_trimmed = force_data_trimmed[: flat_regions[-1][1] + 1]
+                flat_regions_bool_trimmed = flat_regions_bool_trimmed[: flat_regions[-1][1] + 1]
+        else:
+            distance_data_trimmed = distance_data
+            force_data_trimmed = force_data
+            flat_regions_bool_trimmed = flat_regions_bool
+
+        return distance_data_trimmed, force_data_trimmed, flat_regions_bool_trimmed
+
+    @staticmethod
+    # pylint: disable=too-many-locals
+    def _extract_oscillations_from_trimmed_data(
+        distance_data: npt.NDArray[np.float64],
+        force_data: npt.NDArray[np.float64],
+        flat_regions_bool: npt.NDArray[np.bool_],
+    ) -> list[OscillationModel]:
+        """Extract oscillations from trimmed force-distance curve data.
+
+        Note: There must be no non-flat regions at the start or end of the data.
+        """
+        non_flat_regions_bool = ~flat_regions_bool
+        labelled_non_flat_regions: npt.NDArray[np.int32] = label(non_flat_regions_bool)
+        oscillations: list[OscillationModel] = []
+        for label_index in range(1, np.max(labelled_non_flat_regions) + 1):
+            # get indexes of the current non-flat region
+            non_flat_region_indexes = np.where(labelled_non_flat_regions == label_index)
+            non_flat_region_start_index = non_flat_region_indexes[0][0]
+            non_flat_region_end_index = non_flat_region_indexes[0][-1]
+            # get the maximum distance index
+            non_flat_region_distances = distance_data[non_flat_region_start_index : non_flat_region_end_index + 1]
+            non_flat_region_local_maximum_distance_index = np.argmax(non_flat_region_distances)
+            non_flat_region_global_maximum_distance_index = (
+                non_flat_region_start_index + non_flat_region_local_maximum_distance_index
+            )
+            # set the increasing segment to the left of the maximum index
+            increasing_segment_start_index = non_flat_region_start_index
+            # keep the largest distsance value in the increasing segment
+            increasing_segment_end_index = non_flat_region_global_maximum_distance_index + 1
+            # set the decreasing segment to the right of the maximum distance index
+            decreasing_segment_start_index = non_flat_region_global_maximum_distance_index + 1
+            decreasing_segment_end_index = non_flat_region_end_index + 1
+            # get the force data for the increasing and decresaing segments
+            increasing_force = force_data[increasing_segment_start_index:increasing_segment_end_index]
+            increasing_distance = distance_data[increasing_segment_start_index:increasing_segment_end_index]
+            decreasing_force = force_data[decreasing_segment_start_index:decreasing_segment_end_index]
+            decreasing_distance = distance_data[decreasing_segment_start_index:decreasing_segment_end_index]
+            oscillation = OscillationModel(
+                increasing_force=increasing_force,
+                increasing_distance=increasing_distance,
+                decreasing_force=decreasing_force,
+                decreasing_distance=decreasing_distance,
+            )
+            oscillations.append(oscillation)
+        return oscillations
