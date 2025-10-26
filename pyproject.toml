@@ -16,7 +16,16 @@ dependencies = [
 ]
 readme = "README.md"
 
+[dependency-groups]
+dev = [
+    "pytest",
+    "pylint",
+    "mypy",
+    "pre-commit",
+    "ruff>=0.14.2",
+    "pydantic>=2.12.3",
+]
+
 # add an entry point when needed
 # [project.scripts]
 # markeranalyser = "marker_analyser.entry_point:entry_point"
-
