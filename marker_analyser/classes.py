@@ -6,6 +6,8 @@ import re
 from pydantic import BaseModel, ConfigDict
 import numpy as np
 import numpy.typing as npt
+import matplotlib.pyplot as plt
+from scipy.signal import find_peaks
 
 # lumicks doesn't provide type stubs, so have ignored mypy warnings for missing imports in the mypy arguments in
 # settings.
@@ -36,6 +38,175 @@ class OscillationModel(MarkerAnalysisBaseModel):
     decreasing_distance: npt.NDArray[np.float64]
     force_peaks: list[ForcePeakModel] | None = None
     num_peaks: int | None = None
+
+    # pylint: disable=too-many-arguments
+    # pylint: disable=too-many-locals
+    # pylint: disable=too-many-positional-arguments
+    def find_peaks(
+        self,
+        peak_height: tuple[float, float] = (0.5, 30),
+        prominence: float = 0.8,
+        verbose: bool = False,
+        plotting: bool = False,
+        oscillation_index: int | None = None,
+        curve_id: str | None = None,
+    ) -> None:
+        """
+        Find force peaks in the oscillation data's increasing distance-force curve.
+
+        Note that I think we are making a huge assumption that the distance changes at a constant rate, since we don't
+        fit the peaks on the 2d data, but rather only on the force data, ignoring the distance components.
+
+        Parameters
+        ----------
+        peak_height : tuple[float, float], optional
+            The minimum and maximum height of the peaks to be detected.
+        prominence : float, optional
+            The prominence of the peaks to be detected.
+        verbose : bool, optional
+            If True, print additional information about the peaks found.
+        plotting : bool, optional
+            If True, plot the increasing segment with the detected peaks.
+        oscillation_index : int
+            The index of the oscillation within the force-distance curve.
+        curve_id : str
+            The ID of the force-distance curve containing the oscillation.
+        """
+        increasing_force = self.increasing_force
+        increasing_distance = self.increasing_distance
+        peak_indexes, _ = find_peaks(
+            increasing_force,
+            height=peak_height,
+            prominence=prominence,
+        )
+
+        if verbose:
+            print(
+                f"Found {len(peak_indexes)} peaks in increasing segment of"
+                f"oscillation {oscillation_index} for curve {curve_id}."
+            )
+
+        # Check if the peaks meet the criteria for having at least a certain ratio of the data preceding it being
+        # increasing. This is to hopefully avoid noise spikes being detected as peaks.
+        vetted_peak_indexes = []
+        for peak_number, peak_index in enumerate(peak_indexes):
+            if peak_number == 0:
+                # always keep the first
+                vetted_peak_indexes.append(peak_index)
+            else:
+                previous_peak_index = peak_indexes[peak_number - 1]
+                if verbose:
+                    print(f"vetting peak {peak_number} at index {peak_index}")
+                if self.should_vet_peak_increasing_force_criteria(
+                    peak_index=peak_index,
+                    previous_peak_index=previous_peak_index,
+                ):
+                    print(
+                        f"Peak {peak_number} at index {peak_index} ({increasing_distance[peak_index]:.2f} um) in"
+                        f"oscillation {oscillation_index} for curve {curve_id} "
+                        f"did not meet the increasing force criteria and was removed."
+                    )
+                else:
+                    vetted_peak_indexes.append(peak_index)
+
+        if len(vetted_peak_indexes) == 0:
+            if verbose:
+                print(
+                    f"No peaks passed vetting in increasing segment of oscillation {oscillation_index} for"
+                    f"curve {curve_id}."
+                )
+            self.force_peaks = []
+            self.num_peaks = 0
+            return
+        if plotting:
+            # plot the increasing segment with the peaks
+            plt.plot(increasing_distance, increasing_force, label="increasing")
+            # vlines for the peaks
+            plt.vlines(
+                increasing_distance[vetted_peak_indexes],
+                ymin=np.min(increasing_force),
+                ymax=np.max(increasing_force),
+                color="grey",
+                label="peaks",
+                linestyle="--",
+            )
+            plt.title(f"Peaks in increasing segment of oscillation {oscillation_index} for curve {curve_id}")
+            plt.xlabel("Distance (um)")
+            plt.ylabel("Force (pN)")
+            plt.legend()
+            plt.show()
+        force_peaks = []
+        for peak_index in vetted_peak_indexes:
+            force_peak = ForcePeakModel(
+                distance=increasing_distance[peak_index],
+                force=increasing_force[peak_index],
+                index=peak_index,
+            )
+            force_peaks.append(force_peak)
+        self.force_peaks = force_peaks
+        self.num_peaks = len(force_peaks)
+
+    def should_vet_peak_increasing_force_criteria(
+        self,
+        peak_index: int,
+        previous_peak_index: int,
+        minimum_increasing_decreasing_ratio: float = 0.5,
+        verbose: bool = False,
+    ) -> bool:
+        """
+        Check if a peak meets the criteria for strength for continued analysis.
+
+        Checks if a peak meets the criteria for having at least a certain ratio of the data preceding
+        it being increasing.
+
+        This is to hopefully avoid noise spikes being detected as peaks.
+
+        Parameters
+        ----------
+        peak_index : int
+            The index of the peak to be checked.
+        previous_peak_index : int
+            The index of the previous peak.
+        minimum_increasing_decreasing_ratio : float, optional
+            The minimum ratio of the distance after the minimum force to the distance before the minimum force.
+            Default is 0.5.
+        verbose : bool, optional
+            If True, print additional information during the vetting process. Default is False.
+
+        Returns
+        -------
+        bool
+            True if the peak does not meet the criteria and should be deleted, False otherwise.
+        """
+        # find the minimum force between the previous peak and this peak
+        oscillation_distance_data = self.increasing_distance
+        oscillation_force_data = self.increasing_force
+        between_peak_minimum_force_index = (
+            np.argmin(oscillation_force_data[previous_peak_index : peak_index + 1]) + previous_peak_index
+        )
+        if verbose:
+            print(
+                f"indexes: previous peak {previous_peak_index}, current peak {peak_index}, minimum"
+                f"force {between_peak_minimum_force_index}"
+            )
+        distance_at_previous_peak = oscillation_distance_data[previous_peak_index]
+        distance_at_minimum_force = oscillation_distance_data[between_peak_minimum_force_index]
+        distance_at_current_peak = oscillation_distance_data[peak_index]
+        distance_before_minimum = distance_at_minimum_force - distance_at_previous_peak
+        distance_after_minimum = distance_at_current_peak - distance_at_minimum_force
+        if verbose:
+            print(
+                f"distance at: previous peak: {distance_at_previous_peak}, minimum force: {distance_at_minimum_force},"
+                f"current peak: {distance_at_current_peak}"
+            )
+            print(f"Distance before minimum: {distance_before_minimum}")
+            print(f"Distance after minimum: {distance_after_minimum}")
+        distance_increasing_decreasing_ratio = distance_after_minimum / distance_before_minimum
+        if verbose:
+            print(f"Distance increasing/decreasing ratio: {distance_increasing_decreasing_ratio:.2f}")
+        if distance_increasing_decreasing_ratio < minimum_increasing_decreasing_ratio:
+            return True
+        return False
 
 
 class ReducedFDCurveModel(MarkerAnalysisBaseModel):
