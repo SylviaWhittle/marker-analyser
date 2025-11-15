@@ -213,7 +213,7 @@ class ReducedFDCurveModel(MarkerAnalysisBaseModel):
     """A data object to hold reduced force-distance curve data."""
 
     filename: str
-    curve_id: str
+    id: str
     all_forces: npt.NDArray[np.float64]
     all_distances: npt.NDArray[np.float64]
     oscillations: list[OscillationModel] | None = None
@@ -223,9 +223,9 @@ class ReducedFDCurveModel(MarkerAnalysisBaseModel):
 class MattMarkerMetadataModel(MarkerAnalysisBaseModel):
     """A data object to hold metadata for Matt's markers."""
 
-    protein_name: str
-    concentration_nM: float
-    telereps: int
+    protein_name: str | None
+    concentration_nM: float | None
+    telereps: int | None
 
 
 class ReducedMarkerModel(MarkerAnalysisBaseModel):
@@ -237,7 +237,7 @@ class ReducedMarkerModel(MarkerAnalysisBaseModel):
     protein_name: str | None = None
     concentration: float | str | None = None
     include_in_processing: bool = True
-    fd_curves: dict[str, ReducedFDCurveModel] | None = None
+    fd_curves: dict[str, ReducedFDCurveModel]
 
     @classmethod
     def from_file(cls, file_path: Path, verbose: bool = False) -> "ReducedMarkerModel":
@@ -261,7 +261,7 @@ class ReducedMarkerModel(MarkerAnalysisBaseModel):
         # Note that lumicks does not seem to close files after reading them, it will need to be closed manually.
         # This can be done with lumicks_file.h5.close().
         lumicks_file = pylake.File(filename=file_path)
-        metadata = cls.get_file_metadata(filename=file_name)
+        metadata = cls.get_file_metadata_matt(filename=file_name)
         telreps = metadata.telereps
         protein_name = metadata.protein_name
         concentration = metadata.concentration_nM
@@ -282,7 +282,7 @@ class ReducedMarkerModel(MarkerAnalysisBaseModel):
         )
 
     @staticmethod
-    def get_file_metadata(filename: str) -> MattMarkerMetadataModel:
+    def get_file_metadata_matt(filename: str) -> MattMarkerMetadataModel:
         """
         Obtain file metadata from the filename.
 
@@ -294,26 +294,26 @@ class ReducedMarkerModel(MarkerAnalysisBaseModel):
         Returns
         -------
         MattMarkerMetadataModel
-            An object containing the extracted metadata.
+            An object containing the extracted metadata, or None if metadata could not be extracted.
         """
         # grab tel reps
         tel_reps_match = re.search(r"Tel(\d+)", filename)
         if tel_reps_match:
             tel_reps = int(tel_reps_match.group(1))
         else:
-            raise ValueError(f"Could not find telereps regex: Tel(\\d+) in file name {filename}")
+            tel_reps = None
         # grab concentration, assumed to be the float before a "nM".
         concentration_match = re.search(r"(\d+\.?\d*)nM", filename)
         if concentration_match:
             concentration = float(concentration_match.group(1))
         else:
-            concentration = -1.0
+            concentration = None
         # grab protein name, assumed to be before the string "Marker X"
         protein_name_match = re.search(r" (\w+)(?= Marker \d+)", filename)
         if protein_name_match:
             protein_name = protein_name_match.group(1)
         else:
-            raise ValueError(f"Could not find protein name in file name {filename}")
+            protein_name = None
 
         return MattMarkerMetadataModel(
             protein_name=protein_name,
@@ -350,6 +350,7 @@ class ReducedMarkerModel(MarkerAnalysisBaseModel):
         for curve_id, curve_data in pylake_file_fd_curves.items():
             if verbose:
                 print(f"Loading curve {curve_id} with {len(curve_data.d.data)} data points")
+            curve_name = curve_data.name
             force_data: npt.NDArray[np.float64] = curve_data.f.data
             distance_data: npt.NDArray[np.float64] = np.asarray(curve_data.d.data, dtype=np.float64)
 
@@ -383,12 +384,12 @@ class ReducedMarkerModel(MarkerAnalysisBaseModel):
 
             fd_curve = ReducedFDCurveModel(
                 filename=filename,
-                curve_id=curve_id,
+                id=curve_id,
                 all_forces=force_data_trimmed,
                 all_distances=distance_data_trimmed,
                 oscillations=oscillations,
             )
-            fd_curves[curve_id] = fd_curve
+            fd_curves[curve_name] = fd_curve
         return fd_curves
 
     @staticmethod
