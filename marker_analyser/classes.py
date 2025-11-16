@@ -3,7 +3,7 @@
 from pathlib import Path
 
 import re
-from typing import Any
+from typing import Any, Generator
 from pydantic import BaseModel, ConfigDict
 import numpy as np
 import numpy.typing as npt
@@ -396,6 +396,114 @@ class OscillationCollection(MarkerAnalysisBaseModel):
             The IPython pretty-printer object.
         """
         printer.text(repr(self))
+
+    # Mapping methods to allow dict-like access
+    def __getitem__(self, key: str) -> OscillationModel:
+        """
+        Return the oscillation corresponding to the given key.
+
+        Parameters
+        ----------
+        key : str
+            The key of the oscillation to retrieve.
+
+        Returns
+        -------
+        OscillationModel
+            The oscillation corresponding to the given key.
+        """
+        return self.oscillations[key]
+
+    def __iter__(self) -> Generator[tuple[str, OscillationModel], None, None]:
+        """
+        Return a generator over (key, OscillationModel) pairs.
+
+        This is apparently the correct way to do it for pydantic BaseModel classes.
+
+        Returns
+        -------
+        Generator[tuple[str, OscillationModel], None, None]
+            A generator over (key, OscillationModel) pairs.
+        """
+        return (item for item in self.oscillations.items())
+
+    def __len__(self) -> int:
+        """
+        Return the number of oscillations in the collection.
+
+        Returns
+        -------
+        int
+            The number of oscillations in the collection.
+        """
+        return len(self.oscillations)
+
+    def __contains__(self, key: str) -> bool:
+        """
+        Check if the collection contains the given key.
+
+        Parameters
+        ----------
+        key : str
+            The key to check for.
+
+        Returns
+        -------
+        bool
+            True if the key is in the collection, False otherwise.
+        """
+        return key in self.oscillations
+
+    def items(self):
+        """
+        Return the items of the oscillations dictionary.
+
+        Returns
+        -------
+        ItemsView
+            The items of the oscillations dictionary.
+        """
+        return self.oscillations.items()
+
+    def keys(self):
+        """
+        Return the keys of the oscillations dictionary.
+
+        Returns
+        -------
+        KeysView
+            The keys of the oscillations dictionary.
+        """
+        return self.oscillations.keys()
+
+    def values(self):
+        """
+        Return the values of the oscillations dictionary.
+
+        Returns
+        -------
+        ValuesView
+            The values of the oscillations dictionary.
+        """
+        return self.oscillations.values()
+
+    def get(self, key: str, default: Any = None) -> Any:
+        """
+        Return the value for the given key if it exists, otherwise return the default value.
+
+        Parameters
+        ----------
+        key : str
+            The key to look for.
+        default : Any, optional
+            The default value to return if the key does not exist. Default is None.
+
+        Returns
+        -------
+        Any
+            The value for the given key, or the default value.
+        """
+        return self.oscillations.get(key, default)
 
     def plot_all(
         self,
