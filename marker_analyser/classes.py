@@ -340,6 +340,34 @@ class OscillationCollection(MarkerAnalysisBaseModel):
 
     oscillations: dict[str, OscillationModel]
 
+    def __repr__(self) -> str:
+        num_oscillations = len(self.oscillations)
+        sample_keys = list(self.oscillations.keys())[:10]
+        tail = "..." if num_oscillations > 10 else ""
+        return f"OscillationCollection(num_oscillations={num_oscillations}, sample_keys={sample_keys}{tail})"
+
+    def __str__(self) -> str:
+        """
+        Print representation of the object.
+
+        Returns
+        -------
+        str
+            String representation of the object.
+        """
+        return self.__repr__()
+
+    def _repr_pretty_(self, printer) -> None:
+        """
+        IPython pretty-printer (notebook / rich display).
+
+        Parameters
+        ----------
+        printer : Any
+            The IPython pretty-printer object.
+        """
+        printer.text(repr(self))
+
     def plot_all(
         self,
         increasing_segment: bool = True,
