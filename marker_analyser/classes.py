@@ -222,7 +222,12 @@ class OscillationModel(MarkerAnalysisBaseModel):
         return False
 
     def plot(
-        self, increasing_colour: str = "tab:blue", decreasing_colour: str = "tab:green", show: bool = True
+        self,
+        increasing_colour: str = "tab:blue",
+        decreasing_colour: str = "tab:green",
+        show: bool = True,
+        increasing_segment: bool = True,
+        decreasing_segment: bool = True,
     ) -> None:
         """
         Plot the oscillation's force-distance data.
@@ -235,14 +240,20 @@ class OscillationModel(MarkerAnalysisBaseModel):
             The colour to use for the decreasing segment.
         show : bool, optional
             Whether to show the plot immediately.
+        increasing_segment : bool, optional
+            Whether to plot the increasing segment.
+        decreasing_segment : bool, optional
+            Whether to plot the decreasing segment.
         """
 
-        plt.plot(self.increasing_distance, self.increasing_force, color=increasing_colour, alpha=0.5)
-        plt.plot(self.decreasing_distance, self.decreasing_force, color=decreasing_colour, alpha=0.5)
-        if self.increasing_fit is not None:
-            plt.plot(self.increasing_distance, self.increasing_fit.fitted_forces, color=increasing_colour, alpha=1)
-        if self.decreasing_fit is not None:
-            plt.plot(self.decreasing_distance, self.decreasing_fit.fitted_forces, color=decreasing_colour, alpha=1)
+        if increasing_segment:
+            plt.plot(self.increasing_distance, self.increasing_force, color=increasing_colour, alpha=0.5)
+            if self.increasing_fit is not None:
+                plt.plot(self.increasing_distance, self.increasing_fit.fitted_forces, color=increasing_colour, alpha=1)
+        if decreasing_segment:
+            plt.plot(self.decreasing_distance, self.decreasing_force, color=decreasing_colour, alpha=0.5)
+            if self.decreasing_fit is not None:
+                plt.plot(self.decreasing_distance, self.decreasing_fit.fitted_forces, color=decreasing_colour, alpha=1)
         plt.xlabel("Distance (um)")
         plt.ylabel("Force (pN)")
         plt.title("")
@@ -328,10 +339,27 @@ class OscillationCollection(MarkerAnalysisBaseModel):
 
     oscillations: dict[str, OscillationModel]
 
-    def plot_all(self) -> None:
-        """Plot all oscillations in the dataset on a single figure."""
+    def plot_all(
+        self,
+        increasing_segment: bool = True,
+        decreasing_segment: bool = True,
+    ) -> None:
+        """
+        Plot all oscillations in the dataset on a single figure.
+
+        Parameters
+        ----------
+        increasing_segment : bool, optional
+            Whether to plot the increasing segment.
+        decreasing_segment : bool, optional
+            Whether to plot the decreasing segment.
+        """
         for _oscillation_id, oscillation in self.oscillations.items():
-            oscillation.plot(show=False)
+            oscillation.plot(
+                show=False,
+                increasing_segment=increasing_segment,
+                decreasing_segment=decreasing_segment,
+            )
         plt.show()
 
     def fit_model_to_all(
