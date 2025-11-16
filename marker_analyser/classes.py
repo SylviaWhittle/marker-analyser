@@ -221,7 +221,9 @@ class OscillationModel(MarkerAnalysisBaseModel):
             return True
         return False
 
-    def plot(self, increasing_colour: str = "tab:blue", decreasing_colour: str = "tab:green") -> None:
+    def plot(
+        self, increasing_colour: str = "tab:blue", decreasing_colour: str = "tab:green", show: bool = True
+    ) -> None:
         """
         Plot the oscillation's force-distance data.
 
@@ -231,6 +233,8 @@ class OscillationModel(MarkerAnalysisBaseModel):
             The colour to use for the increasing segment.
         decreasing_colour : str, optional
             The colour to use for the decreasing segment.
+        show : bool, optional
+            Whether to show the plot immediately.
         """
 
         plt.plot(self.increasing_distance, self.increasing_force, color=increasing_colour, alpha=0.5)
@@ -242,7 +246,8 @@ class OscillationModel(MarkerAnalysisBaseModel):
         plt.xlabel("Distance (um)")
         plt.ylabel("Force (pN)")
         plt.title("")
-        plt.show()
+        if show:
+            plt.show()
 
     def fit_model(
         self,
@@ -318,6 +323,18 @@ class OscillationModel(MarkerAnalysisBaseModel):
             )
 
 
+class OscillationCollection(MarkerAnalysisBaseModel):
+    """A data object to hold many oscillations together as a dataset."""
+
+    oscillations: dict[str, OscillationModel]
+
+    def plot_all(self) -> None:
+        """Plot all oscillations in the dataset on a single figure."""
+        for _oscillation_id, oscillation in self.oscillations.items():
+            oscillation.plot(show=False)
+        plt.show()
+
+
 class ReducedFDCurveModel(MarkerAnalysisBaseModel):
     """
     A data object to hold reduced force-distance curve data.
@@ -332,8 +349,8 @@ class ReducedFDCurveModel(MarkerAnalysisBaseModel):
         The force data of the fd curve, in pico-newtons.
     all_distances: npt.NDArray[np.float64]
         The distance data of the fd curve, in micrometres.
-    oscillations: list[OscillationModel] | None
-        A list of oscillations found in the fd curve.
+    oscillations: dict[str,OscillationModel] | None
+        A dictionary of oscillations found in the fd curve.
     include_in_processing: bool
         Whether to include this fd curve in further processing.
     """
@@ -342,7 +359,7 @@ class ReducedFDCurveModel(MarkerAnalysisBaseModel):
     id: str
     all_forces: npt.NDArray[np.float64]
     all_distances: npt.NDArray[np.float64]
-    oscillations: list[OscillationModel] | None = None
+    oscillations: dict[str, OscillationModel] | None = None
     include_in_processing: bool = True
 
 
@@ -628,7 +645,7 @@ class ReducedMarkerModel(MarkerAnalysisBaseModel):
         distance_data: npt.NDArray[np.float64],
         force_data: npt.NDArray[np.float64],
         flat_regions_bool: npt.NDArray[np.bool_],
-    ) -> list[OscillationModel]:
+    ) -> dict[str, OscillationModel]:
         """
         Extract oscillations from trimmed force-distance curve data.
 
@@ -643,8 +660,8 @@ class ReducedMarkerModel(MarkerAnalysisBaseModel):
 
         Returns
         -------
-        list[OscillationModel]
-            A list of OscillationModel instances representing the extracted oscillations.
+        dict[str, OscillationModel]
+            A dictionary of OscillationModel instances representing the extracted oscillations.
 
         Notes
         -----
@@ -652,7 +669,8 @@ class ReducedMarkerModel(MarkerAnalysisBaseModel):
         """
         non_flat_regions_bool = ~flat_regions_bool
         labelled_non_flat_regions: npt.NDArray[np.int32] = label(non_flat_regions_bool)
-        oscillations: list[OscillationModel] = []
+        oscillations: dict[str, OscillationModel] = {}
+        oscillation_count = 0
         for label_index in range(1, np.max(labelled_non_flat_regions) + 1):
             # get indexes of the current non-flat region
             non_flat_region_indexes = np.where(labelled_non_flat_regions == label_index)
@@ -682,5 +700,6 @@ class ReducedMarkerModel(MarkerAnalysisBaseModel):
                 decreasing_force=decreasing_force,
                 decreasing_distance=decreasing_distance,
             )
-            oscillations.append(oscillation)
+            oscillations[str(oscillation_count)] = oscillation
+            oscillation_count += 1
         return oscillations
