@@ -334,6 +334,47 @@ class OscillationCollection(MarkerAnalysisBaseModel):
             oscillation.plot(show=False)
         plt.show()
 
+    def fit_model_to_all(
+        self,
+        segment: str,
+        lp_value: float,
+        lp_lower_bound: float,
+        lp_upper_bound: float,
+        lc_value: float,
+        force_offset_lower_bound: float,
+        force_offset_upper_bound: float,
+    ) -> None:
+        """
+        Fit the specified segment of all oscillations in the dataset.
+
+        Parameters
+        ----------
+        segment : str
+            The segment to fit, either "increasing" or "decreasing".
+        lp_value : float
+            Initial guess for persistence length.
+        lp_lower_bound : float
+            Lower bound for persistence length.
+        lp_upper_bound : float
+            Upper bound for persistence length.
+        lc_value : float
+            Initial guess for contour length.
+        force_offset_lower_bound : float
+            Lower bound for force offset.
+        force_offset_upper_bound : float
+            Upper bound for force offset.
+        """
+        for _oscillation_id, oscillation in self.oscillations.items():
+            oscillation.fit_model(
+                segment=segment,
+                lp_value=lp_value,
+                lp_lower_bound=lp_lower_bound,
+                lp_upper_bound=lp_upper_bound,
+                lc_value=lc_value,
+                force_offset_lower_bound=force_offset_lower_bound,
+                force_offset_upper_bound=force_offset_upper_bound,
+            )
+
 
 class ReducedFDCurveModel(MarkerAnalysisBaseModel):
     """
