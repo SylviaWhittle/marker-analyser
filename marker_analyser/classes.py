@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import re
+from typing import Any
 from pydantic import BaseModel, ConfigDict
 import numpy as np
 import numpy.typing as npt
@@ -13,6 +14,8 @@ from scipy.signal import find_peaks
 # settings.
 from lumicks import pylake
 from skimage.morphology import label
+
+from marker_analyser.fitting import fit_model_to_data
 
 
 class MarkerAnalysisBaseModel(BaseModel):
@@ -29,6 +32,14 @@ class ForcePeakModel(MarkerAnalysisBaseModel):
     index: int
 
 
+class FitResult(MarkerAnalysisBaseModel):
+    """A data object to hold fit result data."""
+
+    fitted_forces: npt.NDArray[np.float64]
+    params: Any
+    fit_error: float
+
+
 class OscillationModel(MarkerAnalysisBaseModel):
     """A data object to hold oscillation data."""
 
@@ -38,6 +49,8 @@ class OscillationModel(MarkerAnalysisBaseModel):
     decreasing_distance: npt.NDArray[np.float64]
     force_peaks: list[ForcePeakModel] | None = None
     num_peaks: int | None = None
+    increasing_fit: FitResult | None = None
+    decreasing_fit: FitResult | None = None
 
     # pylint: disable=too-many-arguments
     # pylint: disable=too-many-locals
@@ -208,9 +221,122 @@ class OscillationModel(MarkerAnalysisBaseModel):
             return True
         return False
 
+    def plot(self, increasing_colour: str = "tab:blue", decreasing_colour: str = "tab:green") -> None:
+        """
+        Plot the oscillation's force-distance data.
+
+        Parameters
+        ----------
+        increasing_colour : str, optional
+            The colour to use for the increasing segment.
+        decreasing_colour : str, optional
+            The colour to use for the decreasing segment.
+        """
+
+        plt.plot(self.increasing_distance, self.increasing_force, color=increasing_colour, alpha=0.5)
+        plt.plot(self.decreasing_distance, self.decreasing_force, color=decreasing_colour, alpha=0.5)
+        if self.increasing_fit is not None:
+            plt.plot(self.increasing_distance, self.increasing_fit.fitted_forces, color=increasing_colour, alpha=1)
+        if self.decreasing_fit is not None:
+            plt.plot(self.decreasing_distance, self.decreasing_fit.fitted_forces, color=decreasing_colour, alpha=1)
+        plt.xlabel("Distance (um)")
+        plt.ylabel("Force (pN)")
+        plt.title("")
+        plt.show()
+
+    def fit_model(
+        self,
+        segment: str,
+        lp_value: float,
+        lp_lower_bound: float,
+        lp_upper_bound: float,
+        lc_value: float,
+        force_offset_lower_bound: float,
+        force_offset_upper_bound: float,
+    ) -> None:
+        """
+        Fit the specified segment of the oscillation.
+
+        Parameters
+        ----------
+        segment : str
+            The segment to fit, either "increasing" or "decreasing".
+        lp_value : float
+            Initial guess for persistence length.
+        lp_lower_bound : float
+            Lower bound for persistence length.
+        lp_upper_bound : float
+            Upper bound for persistence length.
+        lc_value : float
+            Initial guess for contour length.
+        force_offset_lower_bound : float
+            Lower bound for force offset.
+        force_offset_upper_bound : float
+            Upper bound for force offset.
+        """
+        if segment == "increasing":
+            try:
+                _fit, fitted_forces, fit_params, fit_error = fit_model_to_data(
+                    distances=self.increasing_distance,
+                    forces=self.increasing_force,
+                    model=pylake.ewlc_odijk_force,
+                    lp_value=lp_value,
+                    lp_lower_bound=lp_lower_bound,
+                    lp_upper_bound=lp_upper_bound,
+                    lc_value=lc_value,
+                    force_offset_lower_bound=force_offset_lower_bound,
+                    force_offset_upper_bound=force_offset_upper_bound,
+                )
+            except np.linalg.LinAlgError:
+                print("Fit failed due to nonconvergence. Skipping.")
+                return
+            self.increasing_fit = FitResult(
+                fitted_forces=fitted_forces,
+                params=fit_params,
+                fit_error=fit_error,
+            )
+        elif segment == "decreasing":
+            try:
+                _fit, fitted_forces, fit_params, fit_error = fit_model_to_data(
+                    distances=self.decreasing_distance,
+                    forces=self.decreasing_force,
+                    model=pylake.ewlc_odijk_force,
+                    lp_value=lp_value,
+                    lp_lower_bound=lp_lower_bound,
+                    lp_upper_bound=lp_upper_bound,
+                    lc_value=lc_value,
+                    force_offset_lower_bound=force_offset_lower_bound,
+                    force_offset_upper_bound=force_offset_upper_bound,
+                )
+            except np.linalg.LinAlgError:
+                print("Fit failed due to nonconvergence. Skipping.")
+                return
+            self.decreasing_fit = FitResult(
+                fitted_forces=fitted_forces,
+                params=fit_params,
+                fit_error=fit_error,
+            )
+
 
 class ReducedFDCurveModel(MarkerAnalysisBaseModel):
-    """A data object to hold reduced force-distance curve data."""
+    """
+    A data object to hold reduced force-distance curve data.
+
+    Attributes
+    ----------
+    filename: str
+        The name of the marker file that the curve was loaded from.
+    id: str
+        The id of the fd curve.
+    all_forces: npt.NDArray[np.float64]
+        The force data of the fd curve, in pico-newtons.
+    all_distances: npt.NDArray[np.float64]
+        The distance data of the fd curve, in micrometres.
+    oscillations: list[OscillationModel] | None
+        A list of oscillations found in the fd curve.
+    include_in_processing: bool
+        Whether to include this fd curve in further processing.
+    """
 
     filename: str
     id: str
