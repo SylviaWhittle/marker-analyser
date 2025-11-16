@@ -16,6 +16,7 @@ from lumicks import pylake
 from skimage.morphology import label
 
 from marker_analyser.fitting import fit_model_to_data
+from marker_analyser.plotting import PALETTE
 
 
 class MarkerAnalysisBaseModel(BaseModel):
@@ -343,6 +344,7 @@ class OscillationCollection(MarkerAnalysisBaseModel):
         self,
         increasing_segment: bool = True,
         decreasing_segment: bool = True,
+        random_colours: bool = False,
     ) -> None:
         """
         Plot all oscillations in the dataset on a single figure.
@@ -353,13 +355,25 @@ class OscillationCollection(MarkerAnalysisBaseModel):
             Whether to plot the increasing segment.
         decreasing_segment : bool, optional
             Whether to plot the decreasing segment.
+        random_colours : bool, optional
+            Whether to use random colours for each oscillation.
         """
         for _oscillation_id, oscillation in self.oscillations.items():
-            oscillation.plot(
-                show=False,
-                increasing_segment=increasing_segment,
-                decreasing_segment=decreasing_segment,
-            )
+            if random_colours:
+                colour = np.random.choice(PALETTE)
+                oscillation.plot(
+                    show=False,
+                    increasing_segment=increasing_segment,
+                    decreasing_segment=decreasing_segment,
+                    increasing_colour=colour,
+                    decreasing_colour=colour,
+                )
+            else:
+                oscillation.plot(
+                    show=False,
+                    increasing_segment=increasing_segment,
+                    decreasing_segment=decreasing_segment,
+                )
         plt.show()
 
     def fit_model_to_all(
