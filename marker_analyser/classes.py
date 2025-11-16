@@ -53,6 +53,35 @@ class OscillationModel(MarkerAnalysisBaseModel):
     increasing_fit: FitResult | None = None
     decreasing_fit: FitResult | None = None
 
+    def __repr__(self) -> str:
+        increasing_fit_err_str = f"err: {self.increasing_fit.fit_error:.2f}" if self.increasing_fit else ""
+        increasing_fit_str = f"increasing fit: {self.increasing_fit is not None} {increasing_fit_err_str}"
+        decreasing_fit_err_str = f"err: {self.decreasing_fit.fit_error:.2f}" if self.decreasing_fit else ""
+        decreasing_fit_str = f"decreasing fit: {self.decreasing_fit is not None} {decreasing_fit_err_str}"
+        return f"OscillationModel | num_peaks: {self.num_peaks} | {increasing_fit_str} | {decreasing_fit_str}"
+
+    def __str__(self) -> str:
+        """
+        Print representation of the object.
+
+        Returns
+        -------
+        str
+            String representation of the object.
+        """
+        return self.__repr__()
+
+    def _repr_pretty_(self, printer) -> None:
+        """
+        IPython pretty-printer (notebook / rich display).
+
+        Parameters
+        ----------
+        printer : Any
+            The IPython pretty-printer object.
+        """
+        printer.text(repr(self))
+
     # pylint: disable=too-many-arguments
     # pylint: disable=too-many-locals
     # pylint: disable=too-many-positional-arguments
