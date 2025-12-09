@@ -44,6 +44,10 @@ class FitResult(MarkerAnalysisBaseModel):
 class OscillationModel(MarkerAnalysisBaseModel):
     """A data object to hold oscillation data."""
 
+    id: str
+    curve_id: str
+    marker_filename: str
+    metadata: dict[str, float | str | int | None]
     increasing_force: npt.NDArray[np.float64]
     increasing_distance: npt.NDArray[np.float64]
     decreasing_force: npt.NDArray[np.float64]
@@ -611,24 +615,14 @@ class ReducedFDCurveModel(MarkerAnalysisBaseModel):
     include_in_processing: bool = True
 
 
-class MattMarkerMetadataModel(MarkerAnalysisBaseModel):
-    """A data object to hold metadata for Matt's markers."""
-
-    protein_name: str | None
-    concentration_nM: float | None
-    telereps: int | None
-
-
 class ReducedMarkerModel(MarkerAnalysisBaseModel):
     """A data object to hold marker data in a reduced form."""
 
     file_path: Path
     file_name: str | None = None
-    telreps: str | int | None = None
-    protein_name: str | None = None
-    concentration: float | str | None = None
     include_in_processing: bool = True
     fd_curves: dict[str, ReducedFDCurveModel]
+    metadata: dict[str, str | float | int | None] | None = None
 
     @classmethod
     def from_file(cls, file_path: Path, verbose: bool = False) -> "ReducedMarkerModel":
@@ -653,9 +647,6 @@ class ReducedMarkerModel(MarkerAnalysisBaseModel):
         # This can be done with lumicks_file.h5.close().
         lumicks_file = pylake.File(filename=file_path)
         metadata = cls.get_file_metadata_matt(filename=file_name)
-        telreps = metadata.telereps
-        protein_name = metadata.protein_name
-        concentration = metadata.concentration_nM
         fd_curves = cls.load_fd_curves(
             filename=file_name,
             pylake_file_fd_curves=lumicks_file.fdcurves,
@@ -666,14 +657,13 @@ class ReducedMarkerModel(MarkerAnalysisBaseModel):
         return cls(
             file_path=file_path,
             file_name=file_name,
-            telreps=telreps,
-            protein_name=protein_name,
-            concentration=concentration,
             fd_curves=fd_curves,
+            include_in_processing=True,
+            metadata=metadata,
         )
 
     @staticmethod
-    def get_file_metadata_matt(filename: str) -> MattMarkerMetadataModel:
+    def get_file_metadata_matt(filename: str) -> dict[str, str | float | int | None]:
         """
         Obtain file metadata from the filename.
 
@@ -684,8 +674,8 @@ class ReducedMarkerModel(MarkerAnalysisBaseModel):
 
         Returns
         -------
-        MattMarkerMetadataModel
-            An object containing the extracted metadata, or None if metadata could not be extracted.
+        dict[str, str | float | int | None]
+            A dictionary containing the extracted metadata.
         """
         # grab tel reps
         tel_reps_match = re.search(r"Tel(\d+)", filename)
@@ -706,11 +696,11 @@ class ReducedMarkerModel(MarkerAnalysisBaseModel):
         else:
             protein_name = None
 
-        return MattMarkerMetadataModel(
-            protein_name=protein_name,
-            concentration_nM=concentration,
-            telereps=tel_reps,
-        )
+        return {
+            "telreps": tel_reps,
+            "protein_name": protein_name,
+            "concentration": concentration,
+        }
 
     @staticmethod
     def load_fd_curves(
@@ -771,6 +761,8 @@ class ReducedMarkerModel(MarkerAnalysisBaseModel):
                 distance_data=distance_data_trimmed,
                 force_data=force_data_trimmed,
                 flat_regions_bool=flat_regions_bool_trimmed,
+                curve_id=curve_id,
+                marker_filename=filename,
             )
 
             fd_curve = ReducedFDCurveModel(
@@ -893,6 +885,9 @@ class ReducedMarkerModel(MarkerAnalysisBaseModel):
         distance_data: npt.NDArray[np.float64],
         force_data: npt.NDArray[np.float64],
         flat_regions_bool: npt.NDArray[np.bool_],
+        curve_id: str = "undefined",
+        marker_filename: str = "undefined",
+        metadata: dict[str, int | float | str | None] | None = None,
     ) -> dict[str, OscillationModel]:
         """
         Extract oscillations from trimmed force-distance curve data.
@@ -915,6 +910,8 @@ class ReducedMarkerModel(MarkerAnalysisBaseModel):
         -----
         There must be no non-flat regions at the start or end of the data.
         """
+        if metadata is None:
+            metadata = {}
         non_flat_regions_bool = ~flat_regions_bool
         labelled_non_flat_regions: npt.NDArray[np.int32] = label(non_flat_regions_bool)
         oscillations: dict[str, OscillationModel] = {}
@@ -943,6 +940,10 @@ class ReducedMarkerModel(MarkerAnalysisBaseModel):
             decreasing_force = force_data[decreasing_segment_start_index:decreasing_segment_end_index]
             decreasing_distance = distance_data[decreasing_segment_start_index:decreasing_segment_end_index]
             oscillation = OscillationModel(
+                id=str(oscillation_count),
+                curve_id=curve_id,
+                marker_filename=marker_filename,
+                metadata=metadata,
                 increasing_force=increasing_force,
                 increasing_distance=increasing_distance,
                 decreasing_force=decreasing_force,
