@@ -17,6 +17,7 @@ from skimage.morphology import label
 
 from marker_analyser.fitting import fit_model_to_data
 from marker_analyser.plotting import PALETTE
+from marker_analyser.parsers import extract_metadata_from_fd_curve_name_with_regex
 
 
 class MarkerAnalysisBaseModel(BaseModel):
@@ -297,12 +298,12 @@ class OscillationModel(MarkerAnalysisBaseModel):
     def fit_model(
         self,
         segment: str,
-        lp_value: float,
-        lp_lower_bound: float,
-        lp_upper_bound: float,
-        lc_value: float,
-        force_offset_lower_bound: float,
-        force_offset_upper_bound: float,
+        lp_value: float | None = None,
+        lp_lower_bound: float | None = None,
+        lp_upper_bound: float | None = None,
+        lc_value: float | None = None,
+        force_offset_lower_bound: float | None = None,
+        force_offset_upper_bound: float | None = None,
     ) -> None:
         """
         Fit the specified segment of the oscillation.
@@ -311,17 +312,17 @@ class OscillationModel(MarkerAnalysisBaseModel):
         ----------
         segment : str
             The segment to fit, either "increasing" or "decreasing".
-        lp_value : float
+        lp_value : float | None
             Initial guess for persistence length.
-        lp_lower_bound : float
+        lp_lower_bound : float | None
             Lower bound for persistence length.
-        lp_upper_bound : float
+        lp_upper_bound : float | None
             Upper bound for persistence length.
-        lc_value : float
+        lc_value : float | None
             Initial guess for contour length.
-        force_offset_lower_bound : float
+        force_offset_lower_bound : float | None
             Lower bound for force offset.
-        force_offset_upper_bound : float
+        force_offset_upper_bound : float | None
             Upper bound for force offset.
         """
         if segment == "increasing":
@@ -548,12 +549,12 @@ class OscillationCollection(MarkerAnalysisBaseModel):
     def fit_model_to_all(
         self,
         segment: str,
-        lp_value: float,
-        lp_lower_bound: float,
-        lp_upper_bound: float,
-        lc_value: float,
-        force_offset_lower_bound: float,
-        force_offset_upper_bound: float,
+        lp_value: float | None = None,
+        lp_lower_bound: float | None = None,
+        lp_upper_bound: float | None = None,
+        lc_value: float | None = None,
+        force_offset_lower_bound: float | None = None,
+        force_offset_upper_bound: float | None = None,
     ) -> None:
         """
         Fit the specified segment of all oscillations in the dataset.
@@ -562,17 +563,17 @@ class OscillationCollection(MarkerAnalysisBaseModel):
         ----------
         segment : str
             The segment to fit, either "increasing" or "decreasing".
-        lp_value : float
+        lp_value : float | None
             Initial guess for persistence length.
-        lp_lower_bound : float
+        lp_lower_bound : float | None
             Lower bound for persistence length.
-        lp_upper_bound : float
+        lp_upper_bound : float | None
             Upper bound for persistence length.
-        lc_value : float
+        lc_value : float | None
             Initial guess for contour length.
-        force_offset_lower_bound : float
+        force_offset_lower_bound : float | None
             Lower bound for force offset.
-        force_offset_upper_bound : float
+        force_offset_upper_bound : float | None
             Upper bound for force offset.
         """
         for _oscillation_id, oscillation in self.oscillations.items():
@@ -605,6 +606,8 @@ class ReducedFDCurveModel(MarkerAnalysisBaseModel):
         A dictionary of oscillations found in the fd curve.
     include_in_processing: bool
         Whether to include this fd curve in further processing.
+    metadata: dict[str, str | float | int | None]
+        A dictionary of metadata extracted from the fd curve name.
     """
 
     filename: str
@@ -613,6 +616,7 @@ class ReducedFDCurveModel(MarkerAnalysisBaseModel):
     all_distances: npt.NDArray[np.float64]
     oscillations: dict[str, OscillationModel] | None = None
     include_in_processing: bool = True
+    metadata: dict[str, str | float | int | None] = {}
 
 
 class ReducedMarkerModel(MarkerAnalysisBaseModel):
@@ -622,10 +626,11 @@ class ReducedMarkerModel(MarkerAnalysisBaseModel):
     file_name: str | None = None
     include_in_processing: bool = True
     fd_curves: dict[str, ReducedFDCurveModel]
-    metadata: dict[str, str | float | int | None] | None = None
 
     @classmethod
-    def from_file(cls, file_path: Path, verbose: bool = False) -> "ReducedMarkerModel":
+    def from_file(
+        cls, file_path: Path, verbose: bool = False, metadata_regex: str | None = None
+    ) -> "ReducedMarkerModel":
         """
         Factory method to create ReducedMarkerModel from a file.
 
@@ -635,6 +640,8 @@ class ReducedMarkerModel(MarkerAnalysisBaseModel):
             The path to the file to load the data from.
         verbose : bool, optional
             If True, print additional information during loading. Default is False.
+        metadata_regex : str | None, optional
+            A regex pattern to extract metadata from fd curve names. Default is None.
 
         Returns
         -------
@@ -646,11 +653,11 @@ class ReducedMarkerModel(MarkerAnalysisBaseModel):
         # Note that lumicks does not seem to close files after reading them, it will need to be closed manually.
         # This can be done with lumicks_file.h5.close().
         lumicks_file = pylake.File(filename=file_path)
-        metadata = cls.get_file_metadata_matt(filename=file_name)
         fd_curves = cls.load_fd_curves(
             filename=file_name,
             pylake_file_fd_curves=lumicks_file.fdcurves,
             verbose=verbose,
+            metadata_regex=metadata_regex,
         )
         # close the lumicks file
         lumicks_file.h5.close()
@@ -659,7 +666,6 @@ class ReducedMarkerModel(MarkerAnalysisBaseModel):
             file_name=file_name,
             fd_curves=fd_curves,
             include_in_processing=True,
-            metadata=metadata,
         )
 
     @staticmethod
@@ -702,11 +708,13 @@ class ReducedMarkerModel(MarkerAnalysisBaseModel):
             "concentration": concentration,
         }
 
+    # pylint: disable=too-many-locals
     @staticmethod
     def load_fd_curves(
         filename: str,
         pylake_file_fd_curves: dict[str, pylake.file.FdCurve],
         verbose: bool = False,
+        metadata_regex: str | None = None,
     ) -> dict[str, ReducedFDCurveModel]:
         """
         Load the force-distance curves from the file.
@@ -719,6 +727,8 @@ class ReducedMarkerModel(MarkerAnalysisBaseModel):
             A dictionary of force-distance curves.
         verbose : bool, optional
             If True, print additional information about the curves being loaded. Default is False.
+        metadata_regex : str | None, optional
+            A regex pattern to extract metadata from fd curve names. Default is None.
 
         Returns
         -------
@@ -732,6 +742,10 @@ class ReducedMarkerModel(MarkerAnalysisBaseModel):
             if verbose:
                 print(f"Loading curve {curve_id} with {len(curve_data.d.data)} data points")
             curve_name = curve_data.name
+            metadata = extract_metadata_from_fd_curve_name_with_regex(
+                curve_name=curve_name,
+                regex_pattern=metadata_regex,
+            )
             force_data: npt.NDArray[np.float64] = curve_data.f.data
             distance_data: npt.NDArray[np.float64] = np.asarray(curve_data.d.data, dtype=np.float64)
 
@@ -763,6 +777,7 @@ class ReducedMarkerModel(MarkerAnalysisBaseModel):
                 flat_regions_bool=flat_regions_bool_trimmed,
                 curve_id=curve_id,
                 marker_filename=filename,
+                metadata=metadata,
             )
 
             fd_curve = ReducedFDCurveModel(
@@ -771,6 +786,7 @@ class ReducedMarkerModel(MarkerAnalysisBaseModel):
                 all_forces=force_data_trimmed,
                 all_distances=distance_data_trimmed,
                 oscillations=oscillations,
+                metadata=metadata,
             )
             fd_curves[curve_name] = fd_curve
         return fd_curves
@@ -900,6 +916,12 @@ class ReducedMarkerModel(MarkerAnalysisBaseModel):
             The force data of the force-distance curve.
         flat_regions_bool : npt.NDArray[np.bool_]
             A boolean array indicating flat regions in the distance data.
+        curve_id : str, optional
+            The ID of the curve, used for logging purposes. Default is "undefined".
+        marker_filename : str, optional
+            The name of the marker file containing the curve, used for logging purposes. Default is "undefined".
+        metadata : dict[str, int | float | str | None] | None, optional
+            A dictionary of metadata to associate with the oscillations. Default is None.
 
         Returns
         -------
