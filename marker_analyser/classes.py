@@ -1,10 +1,12 @@
 """Classes and dataclasses for data storage and handling."""
 
+# pylint: disable=too-many-lines
+
 from pathlib import Path
 
 import re
 from typing import Any, Generator
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, PrivateAttr
 import numpy as np
 import numpy.typing as npt
 import matplotlib.pyplot as plt
@@ -42,6 +44,7 @@ class FitResult(MarkerAnalysisBaseModel):
     fit_error: float
 
 
+# pylint: disable=too-many-instance-attributes
 class OscillationModel(MarkerAnalysisBaseModel):
     """A data object to hold oscillation data."""
 
@@ -51,12 +54,94 @@ class OscillationModel(MarkerAnalysisBaseModel):
     metadata: dict[str, float | str | int | None]
     increasing_force: npt.NDArray[np.float64]
     increasing_distance: npt.NDArray[np.float64]
+    _increasing_force_raw: npt.NDArray[np.float64] | None = PrivateAttr(None)
+    _increasing_distance_raw: npt.NDArray[np.float64] | None = PrivateAttr(None)
     decreasing_force: npt.NDArray[np.float64]
     decreasing_distance: npt.NDArray[np.float64]
+    _decreasing_force_raw: npt.NDArray[np.float64] | None = PrivateAttr(None)
+    _decreasing_distance_raw: npt.NDArray[np.float64] | None = PrivateAttr(None)
+
+    # Fitting
     force_peaks: list[ForcePeakModel] | None = None
     num_peaks: int | None = None
     increasing_fit: FitResult | None = None
     decreasing_fit: FitResult | None = None
+
+    # Masking
+    force_maximum: float | None = None
+    distance_minimum: float | None = None
+    increasing_mask: npt.NDArray[np.bool_] | None = None
+    decreasing_mask: npt.NDArray[np.bool_] | None = None
+
+    # pylint: disable=arguments-differ
+    def model_post_init(self, __context: Any) -> None:
+        """
+        Post-initialisation hook to run after the model is created.
+
+        Parameters
+        ----------
+        __context : Any
+            Unsure, was in an example I found.
+        """
+        # Create copies of the raw data for masking purposes
+        self._increasing_force_raw = self.increasing_force.copy()
+        self._increasing_distance_raw = self.increasing_distance.copy()
+        self._decreasing_force_raw = self.decreasing_force.copy()
+        self._decreasing_distance_raw = self.decreasing_distance.copy()
+        # Create mask of the data based on thresholds
+        self.calculate_masks()
+
+    @property
+    def increasing_force_raw(self) -> npt.NDArray[np.float64]:
+        """
+        Get the raw increasing force data.
+
+        Returns
+        -------
+        npt.NDArray[np.float64]
+            The raw increasing force data.
+        """
+        assert self._increasing_force_raw is not None
+        return self._increasing_force_raw
+
+    @property
+    def increasing_distance_raw(self) -> npt.NDArray[np.float64]:
+        """
+        Get the raw increasing distance data.
+
+        Returns
+        -------
+        npt.NDArray[np.float64]
+            The raw increasing distance data.
+        """
+        assert self._increasing_distance_raw is not None
+        return self._increasing_distance_raw
+
+    @property
+    def decreasing_force_raw(self) -> npt.NDArray[np.float64]:
+        """
+        Get the raw decreasing force data.
+
+        Returns
+        -------
+        npt.NDArray[np.float64]
+            The raw decreasing force data.
+        """
+        assert self._decreasing_force_raw is not None
+        return self._decreasing_force_raw
+
+    @property
+    def decreasing_distance_raw(self) -> npt.NDArray[np.float64]:
+        """
+        Get the raw decreasing distance data.
+
+        Returns
+        -------
+        npt.NDArray[np.float64]
+            The raw decreasing distance data.
+        """
+        assert self._decreasing_distance_raw is not None
+        return self._decreasing_distance_raw
 
     def __repr__(self) -> str:
         increasing_fit_err_str = f"err: {self.increasing_fit.fit_error:.2f}" if self.increasing_fit else ""
@@ -86,6 +171,27 @@ class OscillationModel(MarkerAnalysisBaseModel):
             The IPython pretty-printer object.
         """
         printer.text(repr(self))
+
+    def calculate_masks(
+        self,
+    ) -> None:
+        """Calculate masks for the oscillation data based on thresholds."""
+        increasing_mask = np.ones_like(self.increasing_force, dtype=bool)
+        decreasing_mask = np.ones_like(self.decreasing_force, dtype=bool)
+        if self.force_maximum is not None:
+            print(f"Applying force maximum filter at {self.force_maximum}")
+            increasing_mask &= self.increasing_force <= self.force_maximum
+            decreasing_mask &= self.decreasing_force <= self.force_maximum
+        if self.distance_minimum is not None:
+            print(f"Applying distance minimum filter at {self.distance_minimum}")
+            increasing_mask &= self.increasing_distance >= self.distance_minimum
+            decreasing_mask &= self.decreasing_distance >= self.distance_minimum
+        self.increasing_mask = increasing_mask
+        self.decreasing_mask = decreasing_mask
+        self.increasing_force = self.increasing_force[self.increasing_mask]
+        self.increasing_distance = self.increasing_distance[self.increasing_mask]
+        self.decreasing_force = self.decreasing_force[self.decreasing_mask]
+        self.decreasing_distance = self.decreasing_distance[self.decreasing_mask]
 
     # pylint: disable=too-many-arguments
     # pylint: disable=too-many-locals
@@ -629,7 +735,12 @@ class ReducedMarkerModel(MarkerAnalysisBaseModel):
 
     @classmethod
     def from_file(
-        cls, file_path: Path, verbose: bool = False, metadata_regex: str | None = None
+        cls,
+        file_path: Path,
+        verbose: bool = False,
+        metadata_regex: str | None = None,
+        force_maximum: float | None = None,
+        distance_minimum: float | None = None,
     ) -> "ReducedMarkerModel":
         """
         Factory method to create ReducedMarkerModel from a file.
@@ -642,6 +753,10 @@ class ReducedMarkerModel(MarkerAnalysisBaseModel):
             If True, print additional information during loading. Default is False.
         metadata_regex : str | None, optional
             A regex pattern to extract metadata from fd curve names. Default is None.
+        force_maximum : float | None, optional
+            Maximum force to allow in the data. Datapoints above this value will be excluded. Default: None.
+        distance_minimum : float | None, optional
+            Minimum distance to allow in the data. Datapoints below this value will be excluded. Default: None.
 
         Returns
         -------
@@ -658,6 +773,8 @@ class ReducedMarkerModel(MarkerAnalysisBaseModel):
             pylake_file_fd_curves=lumicks_file.fdcurves,
             verbose=verbose,
             metadata_regex=metadata_regex,
+            force_maximum=force_maximum,
+            distance_minimum=distance_minimum,
         )
         # close the lumicks file
         lumicks_file.h5.close()
@@ -715,6 +832,8 @@ class ReducedMarkerModel(MarkerAnalysisBaseModel):
         pylake_file_fd_curves: dict[str, pylake.file.FdCurve],
         verbose: bool = False,
         metadata_regex: str | None = None,
+        force_maximum: float | None = None,
+        distance_minimum: float | None = None,
     ) -> dict[str, ReducedFDCurveModel]:
         """
         Load the force-distance curves from the file.
@@ -729,6 +848,10 @@ class ReducedMarkerModel(MarkerAnalysisBaseModel):
             If True, print additional information about the curves being loaded. Default is False.
         metadata_regex : str | None, optional
             A regex pattern to extract metadata from fd curve names. Default is None.
+        force_maximum : float | None, optional
+            Maximum force to allow in the data. Datapoints above this value will be excluded. Default: None.
+        distance_minimum : float | None, optional
+            Minimum distance to allow in the data. Datapoints below this value will be excluded. Default: None.
 
         Returns
         -------
@@ -778,6 +901,8 @@ class ReducedMarkerModel(MarkerAnalysisBaseModel):
                 curve_id=curve_id,
                 marker_filename=filename,
                 metadata=metadata,
+                force_maximum=force_maximum,
+                distance_minimum=distance_minimum,
             )
 
             fd_curve = ReducedFDCurveModel(
@@ -904,6 +1029,8 @@ class ReducedMarkerModel(MarkerAnalysisBaseModel):
         curve_id: str = "undefined",
         marker_filename: str = "undefined",
         metadata: dict[str, int | float | str | None] | None = None,
+        force_maximum: float | None = None,
+        distance_minimum: float | None = None,
     ) -> dict[str, OscillationModel]:
         """
         Extract oscillations from trimmed force-distance curve data.
@@ -922,6 +1049,12 @@ class ReducedMarkerModel(MarkerAnalysisBaseModel):
             The name of the marker file containing the curve, used for logging purposes. Default is "undefined".
         metadata : dict[str, int | float | str | None] | None, optional
             A dictionary of metadata to associate with the oscillations. Default is None.
+        force_maximum : float | None, optional
+            Maximum force to allow in the data. Datapoints above this value will be excluded from oscillations.
+            Default: None.
+        distance_minimum : float | None, optional
+            Minimum distance to allow in the data. Datapoints below this value will be excluded from oscillations.
+            Default: None.
 
         Returns
         -------
@@ -970,6 +1103,8 @@ class ReducedMarkerModel(MarkerAnalysisBaseModel):
                 increasing_distance=increasing_distance,
                 decreasing_force=decreasing_force,
                 decreasing_distance=decreasing_distance,
+                force_maximum=force_maximum,
+                distance_minimum=distance_minimum,
             )
             oscillations[str(oscillation_count)] = oscillation
             oscillation_count += 1
