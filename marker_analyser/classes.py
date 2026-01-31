@@ -68,6 +68,8 @@ class OscillationModel(MarkerAnalysisBaseModel):
     decreasing_fit: FitResult | None = None
     increasing_fitted_forces: npt.NDArray[np.float64] | None = None
     decreasing_fitted_forces: npt.NDArray[np.float64] | None = None
+    fitted_forces_both: npt.NDArray[np.float64] | None = None
+    fit_both: FitResult | None = None
 
     # Masking
     force_maximum: float | None = None
@@ -145,9 +147,9 @@ class OscillationModel(MarkerAnalysisBaseModel):
         assert self._decreasing_distance_raw is not None
         return self._decreasing_distance_raw
 
-    # Getter for force_all (both increasing and decreasing concatenated)
+    # Getter for force_both (both increasing and decreasing concatenated)
     @property
-    def forces_all(self) -> npt.NDArray[np.float64]:
+    def forces_both(self) -> npt.NDArray[np.float64]:
         """
         Get the concatenated force data (both increasing and decreasing).
 
@@ -158,9 +160,9 @@ class OscillationModel(MarkerAnalysisBaseModel):
         """
         return np.concatenate([self.increasing_force, self.decreasing_force])
 
-    # Getter for distance_all (both increasing and decreasing concatenated)
+    # Getter for distance_both (both increasing and decreasing concatenated)
     @property
-    def distances_all(self) -> npt.NDArray[np.float64]:
+    def distances_both(self) -> npt.NDArray[np.float64]:
         """
         Get the concatenated distance data (both increasing and decreasing).
 
@@ -443,7 +445,7 @@ class OscillationModel(MarkerAnalysisBaseModel):
         Parameters
         ----------
         segment : str
-            The segment to fit, either "increasing" or "decreasing".
+            The segment to fit, either "increasing" or "decreasing" or "both".
         lp_value : float | None
             Initial guess for persistence length.
         lp_lower_bound : float | None
@@ -495,6 +497,27 @@ class OscillationModel(MarkerAnalysisBaseModel):
                 print("Fit failed due to nonconvergence. Skipping.")
                 return
             self.decreasing_fit = FitResult(
+                fitted_forces=fitted_forces,
+                params=fit_params,
+                fit_error=fit_error,
+            )
+        elif segment == "both":
+            try:
+                _fit, fitted_forces, fit_params, fit_error = fit_model_to_data(
+                    distances=self.distances_both,
+                    forces=self.forces_both,
+                    model=pylake.ewlc_odijk_force,
+                    lp_value=lp_value,
+                    lp_lower_bound=lp_lower_bound,
+                    lp_upper_bound=lp_upper_bound,
+                    lc_value=lc_value,
+                    force_offset_lower_bound=force_offset_lower_bound,
+                    force_offset_upper_bound=force_offset_upper_bound,
+                )
+            except np.linalg.LinAlgError:
+                print("Fit failed due to nonconvergence. Skipping.")
+                return
+            self.fit_both = FitResult(
                 fitted_forces=fitted_forces,
                 params=fit_params,
                 fit_error=fit_error,
