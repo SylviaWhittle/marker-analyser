@@ -66,6 +66,8 @@ class OscillationModel(MarkerAnalysisBaseModel):
     num_peaks: int | None = None
     increasing_fit: FitResult | None = None
     decreasing_fit: FitResult | None = None
+    increasing_fitted_forces: npt.NDArray[np.float64] | None = None
+    decreasing_fitted_forces: npt.NDArray[np.float64] | None = None
 
     # Masking
     force_maximum: float | None = None
@@ -143,6 +145,32 @@ class OscillationModel(MarkerAnalysisBaseModel):
         assert self._decreasing_distance_raw is not None
         return self._decreasing_distance_raw
 
+    # Getter for force_all (both increasing and decreasing concatenated)
+    @property
+    def forces_all(self) -> npt.NDArray[np.float64]:
+        """
+        Get the concatenated force data (both increasing and decreasing).
+
+        Returns
+        -------
+        npt.NDArray[np.float64]
+            The concatenated force data.
+        """
+        return np.concatenate([self.increasing_force, self.decreasing_force])
+
+    # Getter for distance_all (both increasing and decreasing concatenated)
+    @property
+    def distances_all(self) -> npt.NDArray[np.float64]:
+        """
+        Get the concatenated distance data (both increasing and decreasing).
+
+        Returns
+        -------
+        npt.NDArray[np.float64]
+            The concatenated distance data.
+        """
+        return np.concatenate([self.increasing_distance, self.decreasing_distance])
+
     def __repr__(self) -> str:
         increasing_fit_err_str = f"err: {self.increasing_fit.fit_error:.2f}" if self.increasing_fit else ""
         increasing_fit_str = f"increasing fit: {self.increasing_fit is not None} {increasing_fit_err_str}"
@@ -179,11 +207,9 @@ class OscillationModel(MarkerAnalysisBaseModel):
         increasing_mask = np.ones_like(self.increasing_force, dtype=bool)
         decreasing_mask = np.ones_like(self.decreasing_force, dtype=bool)
         if self.force_maximum is not None:
-            print(f"Applying force maximum filter at {self.force_maximum}")
             increasing_mask &= self.increasing_force <= self.force_maximum
             decreasing_mask &= self.decreasing_force <= self.force_maximum
         if self.distance_minimum is not None:
-            print(f"Applying distance minimum filter at {self.distance_minimum}")
             increasing_mask &= self.increasing_distance >= self.distance_minimum
             decreasing_mask &= self.decreasing_distance >= self.distance_minimum
         self.increasing_mask = increasing_mask
