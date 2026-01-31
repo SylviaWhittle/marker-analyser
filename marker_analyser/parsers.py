@@ -29,7 +29,7 @@ def attempt_coerce_string_to_numbers(value: str | int | float) -> str | float | 
 
 def extract_metadata_from_fd_curve_name_with_regex(
     curve_name: str,
-    regex_pattern: str,
+    regex_pattern: str | None,
 ) -> dict[str, str | float | int | None]:
     """
     Extract metadata from the fd curve name using a regex pattern.
@@ -64,6 +64,9 @@ def extract_metadata_from_fd_curve_name_with_regex(
         'repeat': 3
     }
     """
+    if regex_pattern is None:
+        print("Warning: No regex pattern provided for metadata extraction.")
+        return {}
     metadata: dict[str, str | float | int | None] = {}
     compiled_regex_pattern = re.compile(regex_pattern)
     match = compiled_regex_pattern.match(curve_name)
