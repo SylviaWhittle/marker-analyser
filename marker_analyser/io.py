@@ -35,8 +35,13 @@ def load_fd_curves_from_directory(directory_path: Path | str) -> dict[str, Reduc
     return fd_curves
 
 
+# pylint: disable=too-many-locals
 def load_oscillations_from_directory(
-    directory_path: Path | str, exclude_curve_ids: list[str] | None = None, metadata_regex: str | None = None
+    directory_path: Path | str,
+    exclude_curve_ids: list[str] | None = None,
+    metadata_regex: str | None = None,
+    force_maximum: float | None = None,
+    distance_minimum: float | None = None,
 ) -> OscillationCollection:
     """
     Load all Oscillations from a given directory.
@@ -49,6 +54,10 @@ def load_oscillations_from_directory(
         List of curve IDs to exclude, by default None.
     metadata_regex : str | None, optional
         Regex pattern to extract metadata from marker names, by default None.
+    force_maximum : float | None, optional
+        Maximum force to allow in the data. Datapoints above this value will be excluded. Default: None.
+    distance_minimum : float | None, optional
+        Minimum distance to allow in the data. Datapoints below this value will be excluded. Default: None.
 
     Returns
     -------
@@ -64,7 +73,12 @@ def load_oscillations_from_directory(
     num_excluded_curves_duplicate = 0
     print(f"Found {len(file_paths)} marker files in {directory_path}")
     for file_path in file_paths:
-        marker = ReducedMarkerModel.from_file(file_path, metadata_regex=metadata_regex)
+        marker = ReducedMarkerModel.from_file(
+            file_path=file_path,
+            metadata_regex=metadata_regex,
+            force_maximum=force_maximum,
+            distance_minimum=distance_minimum,
+        )
         # Iterate over fd curves
         for curve_id, fd_curve in marker.fd_curves.items():
             if exclude_curve_ids is not None and curve_id in exclude_curve_ids:
