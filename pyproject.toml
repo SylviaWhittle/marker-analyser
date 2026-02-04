@@ -10,6 +10,7 @@ description = "A package for loading and basic analysis of optical tweezer marke
 authors = [{ name = "Sylvia Whittle", email = "sylviwhittle@gmail.com" }]
 license = { file = "LICENSE" }
 dependencies = [
+    "pandas",
     "numpy",
     "matplotlib",
     "lumicks.pylake",
