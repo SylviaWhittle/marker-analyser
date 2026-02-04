@@ -20,6 +20,7 @@ from skimage.morphology import label
 from marker_analyser.fitting import fit_model_to_data
 from marker_analyser.plotting import PALETTE
 from marker_analyser.parsers import extract_metadata_from_fd_curve_name_with_regex
+from marker_analyser.data_manipulation import create_df_from_uneven_data
 
 
 class MarkerAnalysisBaseModel(BaseModel):
@@ -66,9 +67,6 @@ class OscillationModel(MarkerAnalysisBaseModel):
     num_peaks: int | None = None
     increasing_fit: FitResult | None = None
     decreasing_fit: FitResult | None = None
-    increasing_fitted_forces: npt.NDArray[np.float64] | None = None
-    decreasing_fitted_forces: npt.NDArray[np.float64] | None = None
-    fitted_forces_both: npt.NDArray[np.float64] | None = None
     fit_both: FitResult | None = None
 
     # Masking
@@ -664,6 +662,68 @@ class OscillationCollection(MarkerAnalysisBaseModel):
             The value for the given key, or the default value.
         """
         return self.oscillations.get(key, default)
+
+    # pylint: disable=too-many-branches
+    def save_dataset_data_to_csv_file(
+        self, file_path: Path, segment: str, fitted_or_measured: str = "measured"
+    ) -> None:
+        """
+        Save the dataset data to a CSV file.
+
+        Parameters
+        ----------
+        file_path : Path
+            The path to the CSV file to save the data to.
+        segment : str
+            The segment to save, either "increasing" or "decreasing".
+        fitted_or_measured : str, optional
+            The type of data to save, either "measured" or "fitted".
+        """
+
+        data_to_save = {}
+        for oscillation_id, oscillation in self.oscillations.items():
+            if segment == "increasing":
+                if fitted_or_measured == "measured":
+                    data_to_save[f"{oscillation_id}_increasing_distances"] = oscillation.increasing_distance
+                    data_to_save[f"{oscillation_id}_increasing_forces"] = oscillation.increasing_force
+                elif fitted_or_measured == "fitted":
+                    if oscillation.increasing_fit is not None:
+                        data_to_save[f"{oscillation_id}_increasing_distances"] = oscillation.increasing_distance
+                        data_to_save[f"{oscillation_id}_increasing_fitted_forces"] = (
+                            oscillation.increasing_fit.fitted_forces
+                        )
+                    else:
+                        print(
+                            f"Skipping oscillation {oscillation_id} increasing segment fitted data, no fit available."
+                        )
+            elif segment == "decreasing":
+                if fitted_or_measured == "measured":
+                    data_to_save[f"{oscillation_id}_decreasing_distances"] = oscillation.decreasing_distance
+                    data_to_save[f"{oscillation_id}_decreasing_forces"] = oscillation.decreasing_force
+                elif fitted_or_measured == "fitted":
+                    if oscillation.decreasing_fit is not None:
+                        data_to_save[f"{oscillation_id}_decreasing_distances"] = oscillation.decreasing_distance
+                        data_to_save[f"{oscillation_id}_decreasing_fitted_forces"] = (
+                            oscillation.decreasing_fit.fitted_forces
+                        )
+                    else:
+                        print(
+                            f"Skipping oscillation {oscillation_id} decreasing segment fitted data, no fit available."
+                        )
+            elif segment == "both":
+                if fitted_or_measured == "measured":
+                    data_to_save[f"{oscillation_id}_both_distances"] = oscillation.distances_both
+                    data_to_save[f"{oscillation_id}_both_forces"] = oscillation.forces_both
+                elif fitted_or_measured == "fitted":
+                    if oscillation.fit_both is not None:
+                        data_to_save[f"{oscillation_id}_both_distances"] = oscillation.distances_both
+                        data_to_save[f"{oscillation_id}_both_fitted_forces"] = oscillation.fit_both.fitted_forces
+                    else:
+                        print(f"Skipping oscillation {oscillation_id} both segment fitted data, no fit available.")
+
+        # Create dataframe from the data, note that the columns are not of equal length
+        df = create_df_from_uneven_data(data_dict=data_to_save)
+        df.to_csv(file_path, index=False)
 
     def plot_all(
         self,
