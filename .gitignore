@@ -125,3 +125,7 @@ dmypy.json
 
 # VS Code
 .vscode/
+
+# Data
+*.csv
+/experimenting_data/
