@@ -1142,7 +1142,7 @@ class ReducedMarkerModel(MarkerAnalysisBaseModel):
         peak_strength_threshold = 2.0
         if peak_strength < peak_strength_threshold:
             print(
-                f"Warning: Peak strength for curve {curve_id} in file {filename} is low"
+                f"Warning: Baseline distance peak strength for curve {curve_id} in file {filename} is low"
                 f"({peak_strength:.2f}<{peak_strength_threshold})."
             )
             return None
