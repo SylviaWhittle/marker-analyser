@@ -9,6 +9,7 @@ from typing import Any, Generator
 from pydantic import BaseModel, ConfigDict, PrivateAttr
 import numpy as np
 import numpy.typing as npt
+import pandas as pd
 import matplotlib.pyplot as plt
 from scipy.signal import find_peaks
 
@@ -663,6 +664,83 @@ class OscillationCollection(MarkerAnalysisBaseModel):
         """
         return self.oscillations.get(key, default)
 
+    def save_fitting_parameters_to_csv_file(self, file_path: Path, segment: str) -> None:
+        """
+        Save the fitting parameters of the oscillations in the collection to a CSV file.
+
+        Parameters
+        ----------
+        file_path : Path
+            The path to the CSV file to save the data to.
+        segment : str
+            The segment to save, either "increasing" or "decreasing" or "both".
+        """
+
+        # format for csv: columns: oscillation_id, curve_id, marker_filename, lp_value ...
+        data_to_save = []
+        for oscillation_id, oscillation in self.oscillations.items():
+            if segment == "increasing" and oscillation.increasing_fit is not None:
+                fit_params = oscillation.increasing_fit.params
+                data_to_save.append(
+                    {
+                        "oscillation_id": oscillation_id,
+                        "curve_id": oscillation.curve_id,
+                        "marker_filename": oscillation.marker_filename,
+                        "segment": "increasing",
+                        "lp_value": fit_params["fit/Lp"].value,
+                        "lp_error": fit_params["fit/Lp"].stderr,
+                        "lc_value": fit_params["fit/Lc"].value,
+                        "lc_error": fit_params["fit/Lc"].stderr,
+                        "force_offset_value": fit_params["fit/f_offset"].value,
+                        "force_offset_error": fit_params["fit/f_offset"].stderr,
+                        "kT_value": fit_params["kT"].value,
+                        "kT_error": fit_params["kT"].stderr,
+                        **oscillation.metadata,
+                    }
+                )
+            elif segment == "decreasing" and oscillation.decreasing_fit is not None:
+                fit_params = oscillation.decreasing_fit.params
+                data_to_save.append(
+                    {
+                        "oscillation_id": oscillation_id,
+                        "curve_id": oscillation.curve_id,
+                        "marker_filename": oscillation.marker_filename,
+                        "segment": "decreasing",
+                        "lp_value": fit_params["fit/Lp"].value,
+                        "lp_error": fit_params["fit/Lp"].stderr,
+                        "lc_value": fit_params["fit/Lc"].value,
+                        "lc_error": fit_params["fit/Lc"].stderr,
+                        "force_offset_value": fit_params["fit/f_offset"].value,
+                        "force_offset_error": fit_params["fit/f_offset"].stderr,
+                        "kT_value": fit_params["kT"].value,
+                        "kT_error": fit_params["kT"].stderr,
+                        **oscillation.metadata,
+                    }
+                )
+            elif segment == "both" and oscillation.fit_both is not None:
+                fit_params = oscillation.fit_both.params
+                data_to_save.append(
+                    {
+                        "oscillation_id": oscillation_id,
+                        "curve_id": oscillation.curve_id,
+                        "marker_filename": oscillation.marker_filename,
+                        "segment": "both",
+                        "lp_value": fit_params["fit/Lp"].value,
+                        "lp_error": fit_params["fit/Lp"].stderr,
+                        "lc_value": fit_params["fit/Lc"].value,
+                        "lc_error": fit_params["fit/Lc"].stderr,
+                        "force_offset_value": fit_params["fit/f_offset"].value,
+                        "force_offset_error": fit_params["fit/f_offset"].stderr,
+                        "kT_value": fit_params["kT"].value,
+                        "kT_error": fit_params["kT"].stderr,
+                        **oscillation.metadata,
+                    }
+                )
+
+        # Create dataframe from the data
+        df = pd.DataFrame(data_to_save)
+        df.to_csv(file_path, index=False)
+
     # pylint: disable=too-many-branches
     def save_dataset_data_to_csv_file(
         self, file_path: Path, segment: str, fitted_or_measured: str = "measured"
@@ -675,7 +753,7 @@ class OscillationCollection(MarkerAnalysisBaseModel):
         file_path : Path
             The path to the CSV file to save the data to.
         segment : str
-            The segment to save, either "increasing" or "decreasing".
+            The segment to save, either "increasing" or "decreasing" or "both".
         fitted_or_measured : str, optional
             The type of data to save, either "measured" or "fitted".
         """
