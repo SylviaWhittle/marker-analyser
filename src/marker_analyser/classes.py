@@ -22,6 +22,7 @@ from marker_analyser.fitting import fit_model_to_data
 from marker_analyser.plotting import PALETTE
 from marker_analyser.parsers import extract_metadata_from_fd_curve_name_with_regex
 from marker_analyser.data_manipulation import create_df_from_uneven_data
+from marker_analyser.configuration import FitConfig
 
 
 class MarkerAnalysisBaseModel(BaseModel):
@@ -549,6 +550,7 @@ class OscillationCollection(MarkerAnalysisBaseModel):
     """A data object to hold many oscillations together as a dataset."""
 
     oscillations: dict[str, OscillationModel]
+    global_fit: pylake.FdFit | None = None
 
     def __repr__(self) -> str:
         num_oscillations = len(self.oscillations)
@@ -907,6 +909,95 @@ class OscillationCollection(MarkerAnalysisBaseModel):
                 force_offset_lower_bound=force_offset_lower_bound,
                 force_offset_upper_bound=force_offset_upper_bound,
             )
+
+    # pylint: disable=too-many-locals
+    def fit_global_model_to_all(
+        self,
+        segment: str,
+        fit_config: FitConfig,
+    ) -> None:
+        """
+        Fit the specified segment of all oscillations in the dataset using a single global model.
+
+        Parameters
+        ----------
+        segment : str
+            The segment to fit, either "increasing" or "decreasing" or "both".
+        fit_config : FitConfig
+            The configuration for the fit, including initial parameter guesses and bounds.
+        """
+
+        fit_name = fit_config.model_name
+        model = pylake.ewlc_odijk_force(name=fit_name) + pylake.force_offset(name=fit_name)
+        fit = pylake.FdFit(model)
+
+        for oscillation_id, oscillation in self.oscillations.items():
+            individual_params = {}
+
+            # create any individual parameters needed
+            for param, param_config in fit_config.params_config.items():
+                if not param_config.global_param:
+                    individual_params[f"{fit_name}/{param}"] = f"{fit_name}/{param}_{oscillation_id}"
+
+            # if auto calculating the force offsets, will need to set the parameter to be individual
+            if fit_config.auto_calculate_and_fix_f_offset:
+                individual_params[f"{fit_name}/f_offset"] = f"{fit_name}/f_offset_{oscillation_id}"
+
+            # Add data to the model
+            distances, forces = oscillation.get_segment(segment)
+            fit.add_data(
+                name=f"Oscillation {oscillation_id}, segment {segment}",
+                f=forces,
+                d=distances,
+                params=individual_params,
+            )
+
+            # set individual params for this oscillation if the param is not global
+            for param, param_config in fit_config.params_config.items():
+                if not param_config.global_param:
+                    param_name = f"{fit_name}/{param}_{oscillation_id}"
+                    if param_config.initial_value is not None:
+                        fit[param_name].value = param_config.initial_value
+                    if param_config.lower_bound is not None:
+                        fit[param_name].lower_bound = param_config.lower_bound
+                    if param_config.upper_bound is not None:
+                        fit[param_name].upper_bound = param_config.upper_bound
+                    fit[param_name].fixed = param_config.fixed
+
+            # optionally auto-detect the force offset and fix that value
+            if fit_config.auto_calculate_and_fix_f_offset:
+                # calculate the initial force offset based on the specified distance range
+                mask = (distances >= fit_config.f_offset_auto_detect_distance_range_um[0]) & (
+                    distances <= fit_config.f_offset_auto_detect_distance_range_um[1]
+                )
+                force_mask = forces[mask]
+
+                # calculate the median force and use that as the initial force offset
+                calculated_f_offset = np.median(force_mask)
+
+                # set the value
+                fit[f"{fit_name}/f_offset_{oscillation_id}"].value = calculated_f_offset
+                # set it to not be fitted
+                fit[f"{fit_name}/f_offset_{oscillation_id}"].fixed = True
+
+        # set the global params
+        for param, param_config in fit_config.params_config.items():
+            if param_config.global_param:
+                param_name = f"{fit_name}/{param}"
+                if param_config.initial_value is not None:
+                    fit[param_name].value = param_config.initial_value
+                if param_config.lower_bound is not None:
+                    fit[param_name].lower_bound = param_config.lower_bound
+                if param_config.upper_bound is not None:
+                    fit[param_name].upper_bound = param_config.upper_bound
+                fit[param_name].fixed = param_config.fixed
+
+        fit.fit()
+
+        print(f"Fitted global model to {len(self.oscillations)} for segment {segment}. Results:")
+        print(fit)
+
+        self.global_fit = fit
 
 
 class ReducedFDCurveModel(MarkerAnalysisBaseModel):
