@@ -845,7 +845,7 @@ class OscillationCollection(MarkerAnalysisBaseModel):
                 )
         plt.show()
 
-    def fit_model_to_all(
+    def fit_individual_model_to_each(
         self,
         segment: str,
         lp_value: float | None = None,
@@ -856,7 +856,7 @@ class OscillationCollection(MarkerAnalysisBaseModel):
         force_offset_upper_bound: float | None = None,
     ) -> None:
         """
-        Fit the specified segment of all oscillations in the dataset.
+        Fit the specified segment of all oscillations in the dataset using one model per oscillation.
 
         Parameters
         ----------
