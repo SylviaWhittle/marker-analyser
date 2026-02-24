@@ -62,8 +62,6 @@ def fit_model_to_data(
     if force_offset_lower_bound is not None:
         fit["fit/f_offset"].lower_bound = force_offset_lower_bound  # Lower bound for force offset
     if force_offset_upper_bound is not None:
-        fit["fit/f_offset"].lower_bound = force_offset_lower_bound  # Lower bound for force offset
-    if force_offset_upper_bound is not None:
         fit["fit/f_offset"].upper_bound = force_offset_upper_bound  # Upper bound for force offset
     # Perform the fit
     fit.fit()
