@@ -201,6 +201,28 @@ class OscillationModel(MarkerAnalysisBaseModel):
         """
         printer.text(repr(self))
 
+    def get_segment(self, segment: str) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+        """
+        Get the relevant segment of the oscillation data.
+
+        Parameters
+        ----------
+        segment : str
+            The segment to get, either "increasing" or "decreasing" or "both".
+
+        Returns
+        -------
+        tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]
+            The distance and force data for the specified segment.
+        """
+        if segment == "increasing":
+            return self.increasing_distance, self.increasing_force
+        if segment == "decreasing":
+            return self.decreasing_distance, self.decreasing_force
+        if segment == "both":
+            return self.distances_both, self.forces_both
+        raise ValueError(f"Invalid segment: {segment}. Must be either 'increasing', 'decreasing', or 'both'.")
+
     def calculate_masks(
         self,
     ) -> None:
