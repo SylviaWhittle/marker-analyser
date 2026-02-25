@@ -20,11 +20,12 @@ from lumicks import pylake
 from lumicks.pylake.fitting.parameters import Params
 from skimage.morphology import label
 
-from marker_analyser.fitting import fit_model_to_data, FITTING_PARAMS
 from marker_analyser.plotting import PALETTE
 from marker_analyser.parsers import extract_metadata_from_fd_curve_name_with_regex
 from marker_analyser.data_manipulation import create_df_from_uneven_data
 from marker_analyser.configuration import FitConfig
+
+FITTING_PARAMS = ["Lp", "Lc", "St", "f_offset", "kT"]
 
 
 class FitType(Enum):
@@ -78,15 +79,10 @@ class OscillationModel(MarkerAnalysisBaseModel):
     # Fitting
     force_peaks: list[ForcePeakModel] | None = None
     num_peaks: int | None = None
-    fit_increasing: pylake.FdFit | None = None
-    fit_increasing_error: float | None = None
-    fit_increasing_params: Params | None = None
-    fit_decreasing: pylake.FdFit | None = None
-    fit_decreasing_error: float | None = None
-    fit_decreasing_params: Params | None = None
-    fit_both: pylake.FdFit | None = None
-    fit_both_error: float | None = None
-    fit_both_params: Params | None = None
+    fit_individual: pylake.FdFit | None = None
+    fit_individual_config: FitConfig | None = None
+    fit_params: Params | None = None
+    fit_error: float | None = None
     fitted_forces_increasing: npt.NDArray[np.float64] | None = None
     fitted_forces_decreasing: npt.NDArray[np.float64] | None = None
 
@@ -243,18 +239,10 @@ class OscillationModel(MarkerAnalysisBaseModel):
         return self.fit_type is not None
 
     def __repr__(self) -> str:
-        increasing_fit_err_str = (
-            f"err: {self.fit_increasing_error:.2f}" if self.fit_increasing_error is not None else ""
-        )
-        increasing_fit_str = f"increasing fit: {self.fit_increasing is not None} {increasing_fit_err_str}"
-        decreasing_fit_err_str = (
-            f"err: {self.fit_decreasing_error:.2f}" if self.fit_decreasing_error is not None else ""
-        )
-        decreasing_fit_str = f"decreasing fit: {self.fit_decreasing is not None} {decreasing_fit_err_str}"
-        both_fit_err_str = f"err: {self.fit_both_error:.2f}" if self.fit_both_error is not None else ""
         return (
-            f"OscillationModel | num_peaks: {self.num_peaks} | {increasing_fit_str}"
-            f"| {decreasing_fit_str} | {both_fit_err_str}"
+            f"OscillationModel | num_peaks: {self.num_peaks} | fitted: {self.is_fitted} | fit_type: "
+            f"{self.fit_type} | fit_segment: {self.fit_segment} | fit_error: "
+            f"{self.fit_error} | metadata: {self.metadata}"
         )
 
     def __str__(self) -> str:
@@ -538,101 +526,67 @@ class OscillationModel(MarkerAnalysisBaseModel):
 
     def fit_model(
         self,
-        segment: str,
-        lp_value: float | None = None,
-        lp_lower_bound: float | None = None,
-        lp_upper_bound: float | None = None,
-        lc_value: float | None = None,
-        force_offset_lower_bound: float | None = None,
-        force_offset_upper_bound: float | None = None,
+        fit_config: FitConfig,
     ) -> None:
         """
         Fit the specified segment of the oscillation.
 
         Parameters
         ----------
-        segment : str
-            The segment to fit, either "increasing" or "decreasing" or "both".
-        lp_value : float | None
-            Initial guess for persistence length.
-        lp_lower_bound : float | None
-            Lower bound for persistence length.
-        lp_upper_bound : float | None
-            Upper bound for persistence length.
-        lc_value : float | None
-            Initial guess for contour length.
-        force_offset_lower_bound : float | None
-            Lower bound for force offset.
-        force_offset_upper_bound : float | None
-            Upper bound for force offset.
+        fit_config : FitConfig
+            The configuration for the fit to be performed.
         """
+
+        fit_name = fit_config.model_name
+
+        model = pylake.ewlc_odijk_force(name=fit_name) + pylake.force_offset(name=fit_name)
+        fit = pylake.FdFit(model)
+
+        segment = fit_config.segment
+        distances, forces = self.get_segment(segment)
+        fit.add_data(name="data", f=forces, d=distances)
+
+        # configure the parameters
+        for param, param_config in fit_config.params_config.items():
+            assert param_config.global_param is False, f"Parameter {param} can't be a global param for individual fits."
+            if param_config.initial_value is not None:
+                fit[f"{fit_name}/{param}"].value = param_config.initial_value
+            if param_config.lower_bound is not None:
+                fit[f"{fit_name}/{param}"].lower_bound = param_config.lower_bound
+            if param_config.upper_bound is not None:
+                fit[f"{fit_name}/{param}"].upper_bound = param_config.upper_bound
+            fit[f"{fit_name}/{param}"].fixed = param_config.fixed
+
+        # optionally auto-detect the force offset and fix that value
+        if fit_config.auto_calculate_and_fix_f_offset:
+            # calculate the initial force offset based on the specified distance range
+            mask = (distances >= fit_config.f_offset_auto_detect_distance_range_um[0]) & (
+                distances <= fit_config.f_offset_auto_detect_distance_range_um[1]
+            )
+            force_mask = forces[mask]
+
+            # calculate the median force and use that as the initial force offset
+            calculated_f_offset = np.median(force_mask)
+
+            # set the value
+            fit[f"{fit_name}/f_offset"].value = calculated_f_offset
+            # set it to not be fitted
+            fit[f"{fit_name}/f_offset"].fixed = True
+
+        fit.fit()
+        self.fit_individual = fit
+        self.fit_params = fit.params
+        self.fit_error = np.mean(fit.sigma)
+        modelled_forces: npt.NDArray[np.float64] = model(independent=distances, params=fit.params)
         if segment == "increasing":
-            try:
-                fit, fitted_forces, fit_params, fit_error = fit_model_to_data(
-                    distances=self.distances_increasing,
-                    forces=self.forces_increasing,
-                    model=pylake.ewlc_odijk_force,
-                    lp_value=lp_value,
-                    lp_lower_bound=lp_lower_bound,
-                    lp_upper_bound=lp_upper_bound,
-                    lc_value=lc_value,
-                    force_offset_lower_bound=force_offset_lower_bound,
-                    force_offset_upper_bound=force_offset_upper_bound,
-                )
-            except np.linalg.LinAlgError:
-                print("Fit failed due to nonconvergence. Skipping.")
-                return
-            self.fit_increasing = fit
-            self.fit_type = FitType.INDIVIDUAL
-            self.fit_segment = FitSegment.INCREASING
-            self.fit_increasing_params = fit_params
-            self.fit_increasing_error = fit_error
-            self.fitted_forces_increasing = fitted_forces
+            self.fitted_forces_increasing = modelled_forces
         elif segment == "decreasing":
-            try:
-                fit, fitted_forces, fit_params, fit_error = fit_model_to_data(
-                    distances=self.distances_decreasing,
-                    forces=self.forces_decreasing,
-                    model=pylake.ewlc_odijk_force,
-                    lp_value=lp_value,
-                    lp_lower_bound=lp_lower_bound,
-                    lp_upper_bound=lp_upper_bound,
-                    lc_value=lc_value,
-                    force_offset_lower_bound=force_offset_lower_bound,
-                    force_offset_upper_bound=force_offset_upper_bound,
-                )
-            except np.linalg.LinAlgError:
-                print("Fit failed due to nonconvergence. Skipping.")
-                return
-            self.fit_decreasing = fit
-            self.fit_type = FitType.INDIVIDUAL
-            self.fit_segment = FitSegment.DECREASING
-            self.fit_decreasing_params = fit_params
-            self.fit_decreasing_error = fit_error
-            self.fitted_forces_decreasing = fitted_forces
+            self.fitted_forces_decreasing = modelled_forces
         elif segment == "both":
-            try:
-                fit, fitted_forces, fit_params, fit_error = fit_model_to_data(
-                    distances=self.distances_both,
-                    forces=self.forces_both,
-                    model=pylake.ewlc_odijk_force,
-                    lp_value=lp_value,
-                    lp_lower_bound=lp_lower_bound,
-                    lp_upper_bound=lp_upper_bound,
-                    lc_value=lc_value,
-                    force_offset_lower_bound=force_offset_lower_bound,
-                    force_offset_upper_bound=force_offset_upper_bound,
-                )
-            except np.linalg.LinAlgError:
-                print("Fit failed due to nonconvergence. Skipping.")
-                return
-            self.fit_both = fit
-            self.fit_type = FitType.INDIVIDUAL
-            self.fit_segment = FitSegment.BOTH
-            self.fit_both_params = fit_params
-            self.fit_both_error = fit_error
-            self.fitted_forces_increasing = fitted_forces[: len(self.forces_increasing)]
-            self.fitted_forces_decreasing = fitted_forces[len(self.forces_increasing) :]
+            self.fitted_forces_increasing = modelled_forces[: len(self.forces_increasing)]
+            self.fitted_forces_decreasing = modelled_forces[len(self.forces_increasing) :]
+        else:
+            raise ValueError(f"Invalid segment: {segment}. Must be either 'increasing', 'decreasing', or 'both'.")
 
 
 class OscillationCollection(MarkerAnalysisBaseModel):
@@ -778,7 +732,7 @@ class OscillationCollection(MarkerAnalysisBaseModel):
         """
         return self.oscillations.get(key, default)
 
-    def individual_fit_save_parameters_to_csv_file(self, file_path: Path, segment: str) -> None:
+    def individual_fit_save_parameters_to_csv_file(self, file_path: Path) -> None:
         """
         Save the fitting parameters for oscillations fitted with individual models in the collection to a CSV file.
 
@@ -786,86 +740,42 @@ class OscillationCollection(MarkerAnalysisBaseModel):
         ----------
         file_path : Path
             The path to the CSV file to save the data to.
-        segment : str
-            The segment to save, either "increasing" or "decreasing" or "both".
         """
 
         # format for csv: columns: oscillation_id, curve_id, marker_filename, lp_value ...
         data_to_save = []
         for oscillation_id, oscillation in self.oscillations.items():
-            if segment == "increasing":
-                if oscillation.fit_increasing is not None:
-                    fit_params = oscillation.fit_increasing.params
-                    data_to_save.append(
-                        {
-                            "oscillation_id": oscillation_id,
-                            "curve_id": oscillation.curve_id,
-                            "marker_filename": oscillation.marker_filename,
-                            "segment": "increasing",
-                            "lp_value": fit_params["fit/Lp"].value,
-                            "lp_error": fit_params["fit/Lp"].stderr,
-                            "lc_value": fit_params["fit/Lc"].value,
-                            "lc_error": fit_params["fit/Lc"].stderr,
-                            "st_value": fit_params["fit/St"].value,
-                            "st_error": fit_params["fit/St"].stderr,
-                            "force_offset_value": fit_params["fit/f_offset"].value,
-                            "force_offset_error": fit_params["fit/f_offset"].stderr,
-                            "kT_value": fit_params["kT"].value,
-                            "kT_error": fit_params["kT"].stderr,
-                            **oscillation.metadata,
-                        }
-                    )
-                else:
-                    raise ValueError(f"No individual fit found for increasing segment of oscillation {oscillation_id}.")
-            elif segment == "decreasing":
-                if oscillation.fit_decreasing is not None:
-                    fit_params = oscillation.fit_decreasing.params
-                    data_to_save.append(
-                        {
-                            "oscillation_id": oscillation_id,
-                            "curve_id": oscillation.curve_id,
-                            "marker_filename": oscillation.marker_filename,
-                            "segment": "decreasing",
-                            "lp_value": fit_params["fit/Lp"].value,
-                            "lp_error": fit_params["fit/Lp"].stderr,
-                            "lc_value": fit_params["fit/Lc"].value,
-                            "lc_error": fit_params["fit/Lc"].stderr,
-                            "st_value": fit_params["fit/St"].value,
-                            "st_error": fit_params["fit/St"].stderr,
-                            "force_offset_value": fit_params["fit/f_offset"].value,
-                            "force_offset_error": fit_params["fit/f_offset"].stderr,
-                            "kT_value": fit_params["kT"].value,
-                            "kT_error": fit_params["kT"].stderr,
-                            **oscillation.metadata,
-                        }
-                    )
-                else:
-                    raise ValueError(f"No individual fit found for decreasing segment of oscillation {oscillation_id}.")
-            elif segment == "both":
-                if oscillation.fit_both is not None:
-                    fit_params = oscillation.fit_both.params
-                    data_to_save.append(
-                        {
-                            "oscillation_id": oscillation_id,
-                            "curve_id": oscillation.curve_id,
-                            "marker_filename": oscillation.marker_filename,
-                            "segment": "both",
-                            "lp_value": fit_params["fit/Lp"].value,
-                            "lp_error": fit_params["fit/Lp"].stderr,
-                            "lc_value": fit_params["fit/Lc"].value,
-                            "lc_error": fit_params["fit/Lc"].stderr,
-                            "st_value": fit_params["fit/St"].value,
-                            "st_error": fit_params["fit/St"].stderr,
-                            "force_offset_value": fit_params["fit/f_offset"].value,
-                            "force_offset_error": fit_params["fit/f_offset"].stderr,
-                            "kT_value": fit_params["kT"].value,
-                            "kT_error": fit_params["kT"].stderr,
-                            **oscillation.metadata,
-                        }
-                    )
-                else:
-                    raise ValueError(f"No individual fit found for both segment of oscillation {oscillation_id}.")
+            assert oscillation.fit_type == FitType.INDIVIDUAL
+            assert oscillation.fit_segment is not None, f"Oscillation {oscillation_id} has no fit segment specified."
+            segment = oscillation.fit_segment.value
+            assert oscillation.fit_params is not None, f"Oscillation {oscillation_id} has no fit parameters."
+            fit_params = oscillation.fit_params
+            assert oscillation.fit_individual_config is not None, f"Oscillation {oscillation_id} has no fit config."
+            fit_config = oscillation.fit_individual_config
+            fit_name = fit_config.model_name
 
+            # note that all params are individual in this case since one model per oscillation
+
+            data_entry: dict[str, str | float | bool | int | None] = {
+                "oscillation_id": oscillation_id,
+                "curve_id": oscillation.curve_id,
+                "marker_filename": oscillation.marker_filename,
+                "segment": segment,
+                "fit_name": fit_name,
+                "fit_type": oscillation.fit_type.value,
+                "lp_value": fit_params["fit/Lp"].value,
+                "lp_error": fit_params["fit/Lp"].stderr,
+                "lc_value": fit_params["fit/Lc"].value,
+                "lc_error": fit_params["fit/Lc"].stderr,
+                "st_value": fit_params["fit/St"].value,
+                "st_error": fit_params["fit/St"].stderr,
+                "force_offset_value": fit_params["fit/f_offset"].value,
+                "force_offset_error": fit_params["fit/f_offset"].stderr,
+                "kT_value": fit_params["kT"].value,
+                "kT_error": fit_params["kT"].stderr,
+                **oscillation.metadata,
+            }
+            data_to_save.append(data_entry)
         # Create dataframe from the data
         df = pd.DataFrame(data_to_save)
         df.to_csv(file_path, index=False)
@@ -901,11 +811,15 @@ class OscillationCollection(MarkerAnalysisBaseModel):
                 global_params.append(param_string_name)
 
         for oscillation_id, oscillation in self.oscillations.items():
+            assert oscillation.fit_type is not None
+            fit_type = oscillation.fit_type.value
             data_entry: dict[str, str | float | bool | int | None] = {
                 "oscillation_id": oscillation_id,
                 "curve_id": oscillation.curve_id,
                 "marker_filename": oscillation.marker_filename,
                 "segment": self.fit_config.segment,
+                "fit_name": fit_name,
+                "fit_type": fit_type,
             }
             for param_string_name in global_params:
                 data_entry[f"{param_string_name}_value"] = fit_params[param_string_name].value
@@ -1029,48 +943,22 @@ class OscillationCollection(MarkerAnalysisBaseModel):
 
     def fit_individual_model_to_each(
         self,
-        segment: str,
-        lp_value: float | None = None,
-        lp_lower_bound: float | None = None,
-        lp_upper_bound: float | None = None,
-        lc_value: float | None = None,
-        force_offset_lower_bound: float | None = None,
-        force_offset_upper_bound: float | None = None,
+        fit_config: FitConfig,
     ) -> None:
         """
         Fit the specified segment of all oscillations in the dataset using one model per oscillation.
 
         Parameters
         ----------
-        segment : str
-            The segment to fit, either "increasing" or "decreasing".
-        lp_value : float | None
-            Initial guess for persistence length.
-        lp_lower_bound : float | None
-            Lower bound for persistence length.
-        lp_upper_bound : float | None
-            Upper bound for persistence length.
-        lc_value : float | None
-            Initial guess for contour length.
-        force_offset_lower_bound : float | None
-            Lower bound for force offset.
-        force_offset_upper_bound : float | None
-            Upper bound for force offset.
+        fit_config : FitConfig
+            The configuration for the fit, including initial parameter guesses and bounds.
         """
 
         for oscillation_id, oscillation in self.oscillations.items():
             if oscillation.is_fitted:
                 raise ValueError(f"Oscillation {oscillation_id} is already fitted.")
         for _oscillation_id, oscillation in self.oscillations.items():
-            oscillation.fit_model(
-                segment=segment,
-                lp_value=lp_value,
-                lp_lower_bound=lp_lower_bound,
-                lp_upper_bound=lp_upper_bound,
-                lc_value=lc_value,
-                force_offset_lower_bound=force_offset_lower_bound,
-                force_offset_upper_bound=force_offset_upper_bound,
-            )
+            oscillation.fit_model(fit_config=fit_config)
 
     # pylint: disable=too-many-locals
     def fit_global_model_to_all(
