@@ -1,6 +1,6 @@
 """Configuration models."""
 
-from typing import Self
+from typing import Self, Literal
 
 from pydantic import BaseModel, model_validator, ValidationError
 
@@ -37,6 +37,7 @@ class FitConfig(BaseModel):
     auto_calculate_and_fix_f_offset: bool
     f_offset_auto_detect_distance_range_um: tuple[float, float] = (10, 12)
     model_name: str = "fit"
+    segment: Literal["increasing", "decreasing", "both"]
 
     @model_validator(mode="after")
     def check_f_offset_not_global_if_auto_calculating(self) -> Self:

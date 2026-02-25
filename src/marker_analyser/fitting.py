@@ -6,6 +6,8 @@ from lumicks import pylake
 
 from lumicks.pylake.fitting.parameters import Params
 
+FITTING_PARAMS = ["Lp", "Lc", "St", "f_offset", "kT"]
+
 
 def fit_model_to_data(
     distances: npt.NDArray[np.float64],

@@ -20,7 +20,7 @@ from lumicks import pylake
 from lumicks.pylake.fitting.parameters import Params
 from skimage.morphology import label
 
-from marker_analyser.fitting import fit_model_to_data
+from marker_analyser.fitting import fit_model_to_data, FITTING_PARAMS
 from marker_analyser.plotting import PALETTE
 from marker_analyser.parsers import extract_metadata_from_fd_curve_name_with_regex
 from marker_analyser.data_manipulation import create_df_from_uneven_data
@@ -65,7 +65,7 @@ class OscillationModel(MarkerAnalysisBaseModel):
     marker_filename: str
     fit_type: FitType | None = None
     fit_segment: FitSegment | None = None
-    metadata: dict[str, float | str | int | None]
+    metadata: dict[str, float | str | int | bool | None]
     forces_increasing: npt.NDArray[np.float64]
     distances_increasing: npt.NDArray[np.float64]
     _forces_raw_increasing: npt.NDArray[np.float64] | None = PrivateAttr(None)
@@ -640,6 +640,7 @@ class OscillationCollection(MarkerAnalysisBaseModel):
 
     oscillations: dict[str, OscillationModel]
     global_fit: pylake.FdFit | None = None
+    fit_config: FitConfig | None = None
 
     def __repr__(self) -> str:
         num_oscillations = len(self.oscillations)
@@ -869,6 +870,70 @@ class OscillationCollection(MarkerAnalysisBaseModel):
         df = pd.DataFrame(data_to_save)
         df.to_csv(file_path, index=False)
 
+    def global_fit_save_parameters_to_csv_file(self, file_path: Path) -> None:
+        """
+        Save the fitting parameters for the global fit of the collection to a CSV file.
+
+        Parameters
+        ----------
+        file_path : Path
+            The path to the CSV file to save the data to.
+        """
+        assert self.global_fit is not None, "No global fit found for the collection."
+        assert self.fit_config is not None, "No fit config found for the collection."
+        fit_name = self.fit_config.model_name
+        fit_params = self.global_fit.params
+
+        data_to_save = []
+
+        global_params = []
+        individual_params = []
+
+        # determine if each parameter is shared or individual
+        for param_name in FITTING_PARAMS:
+            if param_name == "kT":
+                param_string_name = "kT"
+            else:
+                param_string_name = f"{fit_name}/{param_name}"
+            if param_string_name not in fit_params:
+                individual_params.append(param_string_name)
+            else:
+                global_params.append(param_string_name)
+
+        for oscillation_id, oscillation in self.oscillations.items():
+            data_entry: dict[str, str | float | bool | int | None] = {
+                "oscillation_id": oscillation_id,
+                "curve_id": oscillation.curve_id,
+                "marker_filename": oscillation.marker_filename,
+                "segment": self.fit_config.segment,
+            }
+            for param_string_name in global_params:
+                data_entry[f"{param_string_name}_value"] = fit_params[param_string_name].value
+                data_entry[f"{param_string_name}_is_global"] = True
+                data_entry[f"{param_string_name}_is_fixed"] = fit_params[param_string_name].fixed
+                data_entry[f"{param_string_name}_error"] = fit_params[param_string_name].stderr
+
+            for param_string_name in individual_params:
+                individual_param_string_name = f"{param_string_name}_{oscillation_id}"
+                if individual_param_string_name not in fit_params:
+                    raise ValueError(
+                        f"Individual parameter {individual_param_string_name} not found in global fit parameters for "
+                        f"oscillation {oscillation_id}."
+                    )
+                data_entry[f"{param_string_name}_value"] = fit_params[individual_param_string_name].value
+                data_entry[f"{param_string_name}_is_global"] = False
+                data_entry[f"{param_string_name}_is_fixed"] = fit_params[individual_param_string_name].fixed
+                data_entry[f"{param_string_name}_error"] = fit_params[individual_param_string_name].stderr
+
+            # add metadata
+            data_entry.update(oscillation.metadata)
+
+            data_to_save.append(data_entry)
+
+        # Create dataframe from the data
+        df = pd.DataFrame(data_to_save)
+        df.to_csv(file_path, index=False)
+
     # pylint: disable=too-many-branches
     def save_collection_data_to_csv_file(
         self, file_path: Path, segment: str, fitted_or_measured: str = "measured"
@@ -1010,7 +1075,6 @@ class OscillationCollection(MarkerAnalysisBaseModel):
     # pylint: disable=too-many-locals
     def fit_global_model_to_all(
         self,
-        segment: str,
         fit_config: FitConfig,
     ) -> None:
         """
@@ -1018,8 +1082,6 @@ class OscillationCollection(MarkerAnalysisBaseModel):
 
         Parameters
         ----------
-        segment : str
-            The segment to fit, either "increasing" or "decreasing" or "both".
         fit_config : FitConfig
             The configuration for the fit, including initial parameter guesses and bounds.
         """
@@ -1045,9 +1107,9 @@ class OscillationCollection(MarkerAnalysisBaseModel):
                 individual_params[f"{fit_name}/f_offset"] = f"{fit_name}/f_offset_{oscillation_id}"
 
             # Add data to the model
-            distances, forces = oscillation.get_segment(segment)
+            distances, forces = oscillation.get_segment(fit_config.segment)
             fit.add_data(
-                name=f"Oscillation {oscillation_id}, segment {segment}",
+                name=f"Oscillation {oscillation_id}, segment {fit_config.segment}",
                 f=forces,
                 d=distances,
                 params=individual_params,
@@ -1095,10 +1157,11 @@ class OscillationCollection(MarkerAnalysisBaseModel):
 
         fit.fit()
 
-        print(f"Fitted global model to {len(self.oscillations)} for segment {segment}. Results:")
+        print(f"Fitted global model to {len(self.oscillations)} for segment {fit_config.segment}. Results:")
         print(fit)
 
         self.global_fit = fit
+        self.fit_config = fit_config
 
 
 class ReducedFDCurveModel(MarkerAnalysisBaseModel):
