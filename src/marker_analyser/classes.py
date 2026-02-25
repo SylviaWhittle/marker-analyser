@@ -3,6 +3,7 @@
 # pylint: disable=too-many-lines
 
 from pathlib import Path
+from enum import Enum
 
 import re
 from typing import Any, Generator
@@ -16,6 +17,7 @@ from scipy.signal import find_peaks
 # lumicks doesn't provide type stubs, so have ignored mypy warnings for missing imports in the mypy arguments in
 # settings.
 from lumicks import pylake
+from lumicks.pylake.fitting.parameters import Params
 from skimage.morphology import label
 
 from marker_analyser.fitting import fit_model_to_data
@@ -23,6 +25,21 @@ from marker_analyser.plotting import PALETTE
 from marker_analyser.parsers import extract_metadata_from_fd_curve_name_with_regex
 from marker_analyser.data_manipulation import create_df_from_uneven_data
 from marker_analyser.configuration import FitConfig
+
+
+class FitType(Enum):
+    """Enum to specify whether a fit is individual or global."""
+
+    INDIVIDUAL = 0
+    GLOBAL = 1
+
+
+class FitSegment(Enum):
+    """Enum to track which segment of the data has been fitted."""
+
+    INCREASING = "increasing"
+    DECREASING = "decreasing"
+    BOTH = "both"
 
 
 class MarkerAnalysisBaseModel(BaseModel):
@@ -39,13 +56,6 @@ class ForcePeakModel(MarkerAnalysisBaseModel):
     index: int
 
 
-class FitResult(MarkerAnalysisBaseModel):
-    """A data object to hold fit result data."""
-
-    params: Any
-    fit_error: float
-
-
 # pylint: disable=too-many-instance-attributes
 class OscillationModel(MarkerAnalysisBaseModel):
     """A data object to hold oscillation data."""
@@ -53,6 +63,8 @@ class OscillationModel(MarkerAnalysisBaseModel):
     id: str
     curve_id: str
     marker_filename: str
+    fit_type: FitType | None = None
+    fit_segment: FitSegment | None = None
     metadata: dict[str, float | str | int | None]
     forces_increasing: npt.NDArray[np.float64]
     distances_increasing: npt.NDArray[np.float64]
@@ -66,9 +78,15 @@ class OscillationModel(MarkerAnalysisBaseModel):
     # Fitting
     force_peaks: list[ForcePeakModel] | None = None
     num_peaks: int | None = None
-    increasing_fit: FitResult | None = None
-    decreasing_fit: FitResult | None = None
-    fit_both: FitResult | None = None
+    fit_increasing: pylake.FdFit | None = None
+    fit_increasing_error: float | None = None
+    fit_increasing_params: Params | None = None
+    fit_decreasing: pylake.FdFit | None = None
+    fit_decreasing_error: float | None = None
+    fit_decreasing_params: Params | None = None
+    fit_both: pylake.FdFit | None = None
+    fit_both_error: float | None = None
+    fit_both_params: Params | None = None
     fitted_forces_increasing: npt.NDArray[np.float64] | None = None
     fitted_forces_decreasing: npt.NDArray[np.float64] | None = None
 
@@ -212,12 +230,32 @@ class OscillationModel(MarkerAnalysisBaseModel):
             return np.concatenate([self.fitted_forces_increasing, self.fitted_forces_decreasing])
         return None
 
+    @property
+    def is_fitted(self) -> bool:
+        """
+        Check if the oscillation has been fitted.
+
+        Returns
+        -------
+        bool
+            True if the oscillation has been fitted, False otherwise.
+        """
+        return self.fit_type is not None
+
     def __repr__(self) -> str:
-        increasing_fit_err_str = f"err: {self.increasing_fit.fit_error:.2f}" if self.increasing_fit else ""
-        increasing_fit_str = f"increasing fit: {self.increasing_fit is not None} {increasing_fit_err_str}"
-        decreasing_fit_err_str = f"err: {self.decreasing_fit.fit_error:.2f}" if self.decreasing_fit else ""
-        decreasing_fit_str = f"decreasing fit: {self.decreasing_fit is not None} {decreasing_fit_err_str}"
-        return f"OscillationModel | num_peaks: {self.num_peaks} | {increasing_fit_str} | {decreasing_fit_str}"
+        increasing_fit_err_str = (
+            f"err: {self.fit_increasing_error:.2f}" if self.fit_increasing_error is not None else ""
+        )
+        increasing_fit_str = f"increasing fit: {self.fit_increasing is not None} {increasing_fit_err_str}"
+        decreasing_fit_err_str = (
+            f"err: {self.fit_decreasing_error:.2f}" if self.fit_decreasing_error is not None else ""
+        )
+        decreasing_fit_str = f"decreasing fit: {self.fit_decreasing is not None} {decreasing_fit_err_str}"
+        both_fit_err_str = f"err: {self.fit_both_error:.2f}" if self.fit_both_error is not None else ""
+        return (
+            f"OscillationModel | num_peaks: {self.num_peaks} | {increasing_fit_str}"
+            f"| {decreasing_fit_str} | {both_fit_err_str}"
+        )
 
     def __str__(self) -> str:
         """
@@ -458,6 +496,7 @@ class OscillationModel(MarkerAnalysisBaseModel):
         show: bool = True,
         increasing_segment: bool = True,
         decreasing_segment: bool = True,
+        plot_label: str | None = None,
     ) -> None:
         """
         Plot the oscillation's force-distance data.
@@ -474,16 +513,23 @@ class OscillationModel(MarkerAnalysisBaseModel):
             Whether to plot the increasing segment.
         decreasing_segment : bool, optional
             Whether to plot the decreasing segment.
+        plot_label : str, optional
+            The label to use for the plot legend.
         """
 
         if increasing_segment:
-            plt.plot(self.distances_increasing, self.forces_increasing, color=increasing_colour, alpha=0.5)
-            assert self.fitted_forces_increasing is not None
-            plt.plot(self.distances_increasing, self.fitted_forces_increasing, color=increasing_colour, alpha=1)
+            plt.plot(
+                self.distances_increasing, self.forces_increasing, color=increasing_colour, alpha=0.5, label=plot_label
+            )
+            # if there is fitted data, plot it
+            if self.fitted_forces_increasing is not None:
+                plt.plot(self.distances_increasing, self.fitted_forces_increasing, color=increasing_colour, alpha=1)
         if decreasing_segment:
-            plt.plot(self.distances_decreasing, self.forces_decreasing, color=decreasing_colour, alpha=0.5)
-            assert self.fitted_forces_decreasing is not None
-            plt.plot(self.distances_decreasing, self.fitted_forces_decreasing, color=decreasing_colour, alpha=1)
+            plt.plot(
+                self.distances_decreasing, self.forces_decreasing, color=decreasing_colour, alpha=0.5, label=plot_label
+            )
+            if self.fitted_forces_decreasing is not None:
+                plt.plot(self.distances_decreasing, self.fitted_forces_decreasing, color=decreasing_colour, alpha=1)
         plt.xlabel("Distance (um)")
         plt.ylabel("Force (pN)")
         plt.title("")
@@ -522,7 +568,7 @@ class OscillationModel(MarkerAnalysisBaseModel):
         """
         if segment == "increasing":
             try:
-                _fit, fitted_forces, fit_params, fit_error = fit_model_to_data(
+                fit, fitted_forces, fit_params, fit_error = fit_model_to_data(
                     distances=self.distances_increasing,
                     forces=self.forces_increasing,
                     model=pylake.ewlc_odijk_force,
@@ -536,14 +582,15 @@ class OscillationModel(MarkerAnalysisBaseModel):
             except np.linalg.LinAlgError:
                 print("Fit failed due to nonconvergence. Skipping.")
                 return
-            self.increasing_fit = FitResult(
-                params=fit_params,
-                fit_error=fit_error,
-            )
+            self.fit_increasing = fit
+            self.fit_type = FitType.INDIVIDUAL
+            self.fit_segment = FitSegment.INCREASING
+            self.fit_increasing_params = fit_params
+            self.fit_increasing_error = fit_error
             self.fitted_forces_increasing = fitted_forces
         elif segment == "decreasing":
             try:
-                _fit, fitted_forces, fit_params, fit_error = fit_model_to_data(
+                fit, fitted_forces, fit_params, fit_error = fit_model_to_data(
                     distances=self.distances_decreasing,
                     forces=self.forces_decreasing,
                     model=pylake.ewlc_odijk_force,
@@ -557,14 +604,15 @@ class OscillationModel(MarkerAnalysisBaseModel):
             except np.linalg.LinAlgError:
                 print("Fit failed due to nonconvergence. Skipping.")
                 return
-            self.decreasing_fit = FitResult(
-                params=fit_params,
-                fit_error=fit_error,
-            )
+            self.fit_decreasing = fit
+            self.fit_type = FitType.INDIVIDUAL
+            self.fit_segment = FitSegment.DECREASING
+            self.fit_decreasing_params = fit_params
+            self.fit_decreasing_error = fit_error
             self.fitted_forces_decreasing = fitted_forces
         elif segment == "both":
             try:
-                _fit, fitted_forces, fit_params, fit_error = fit_model_to_data(
+                fit, fitted_forces, fit_params, fit_error = fit_model_to_data(
                     distances=self.distances_both,
                     forces=self.forces_both,
                     model=pylake.ewlc_odijk_force,
@@ -578,10 +626,11 @@ class OscillationModel(MarkerAnalysisBaseModel):
             except np.linalg.LinAlgError:
                 print("Fit failed due to nonconvergence. Skipping.")
                 return
-            self.fit_both = FitResult(
-                params=fit_params,
-                fit_error=fit_error,
-            )
+            self.fit_both = fit
+            self.fit_type = FitType.INDIVIDUAL
+            self.fit_segment = FitSegment.BOTH
+            self.fit_both_params = fit_params
+            self.fit_both_error = fit_error
             self.fitted_forces_increasing = fitted_forces[: len(self.forces_increasing)]
             self.fitted_forces_decreasing = fitted_forces[len(self.forces_increasing) :]
 
@@ -744,8 +793,8 @@ class OscillationCollection(MarkerAnalysisBaseModel):
         data_to_save = []
         for oscillation_id, oscillation in self.oscillations.items():
             if segment == "increasing":
-                if oscillation.increasing_fit is not None:
-                    fit_params = oscillation.increasing_fit.params
+                if oscillation.fit_increasing is not None:
+                    fit_params = oscillation.fit_increasing.params
                     data_to_save.append(
                         {
                             "oscillation_id": oscillation_id,
@@ -768,8 +817,8 @@ class OscillationCollection(MarkerAnalysisBaseModel):
                 else:
                     raise ValueError(f"No individual fit found for increasing segment of oscillation {oscillation_id}.")
             elif segment == "decreasing":
-                if oscillation.decreasing_fit is not None:
-                    fit_params = oscillation.decreasing_fit.params
+                if oscillation.fit_decreasing is not None:
+                    fit_params = oscillation.fit_decreasing.params
                     data_to_save.append(
                         {
                             "oscillation_id": oscillation_id,
@@ -872,6 +921,7 @@ class OscillationCollection(MarkerAnalysisBaseModel):
         increasing_segment: bool = True,
         decreasing_segment: bool = True,
         random_colours: bool = False,
+        legend: bool = True,
     ) -> None:
         """
         Plot all oscillations in the dataset on a single figure.
@@ -884,8 +934,10 @@ class OscillationCollection(MarkerAnalysisBaseModel):
             Whether to plot the decreasing segment.
         random_colours : bool, optional
             Whether to use random colours for each oscillation.
+        legend : bool, optional
+            Whether to add a legend to the plot.
         """
-        for _oscillation_id, oscillation in self.oscillations.items():
+        for oscillation_id, oscillation in self.oscillations.items():
             if random_colours:
                 colour = np.random.choice(PALETTE)
                 oscillation.plot(
@@ -894,13 +946,20 @@ class OscillationCollection(MarkerAnalysisBaseModel):
                     decreasing_segment=decreasing_segment,
                     increasing_colour=colour,
                     decreasing_colour=colour,
+                    plot_label=oscillation_id,
                 )
             else:
                 oscillation.plot(
                     show=False,
                     increasing_segment=increasing_segment,
                     decreasing_segment=decreasing_segment,
+                    plot_label=oscillation_id,
                 )
+        if legend:
+            plt.legend(
+                # outside the chart on the right
+                bbox_to_anchor=(1.05, 1),
+            )
         plt.show()
 
     def fit_individual_model_to_each(
@@ -933,6 +992,10 @@ class OscillationCollection(MarkerAnalysisBaseModel):
         force_offset_upper_bound : float | None
             Upper bound for force offset.
         """
+
+        for oscillation_id, oscillation in self.oscillations.items():
+            if oscillation.is_fitted:
+                raise ValueError(f"Oscillation {oscillation_id} is already fitted.")
         for _oscillation_id, oscillation in self.oscillations.items():
             oscillation.fit_model(
                 segment=segment,
@@ -960,6 +1023,10 @@ class OscillationCollection(MarkerAnalysisBaseModel):
         fit_config : FitConfig
             The configuration for the fit, including initial parameter guesses and bounds.
         """
+
+        for oscillation_id, oscillation in self.oscillations.items():
+            if oscillation.is_fitted:
+                raise ValueError(f"Oscillation {oscillation_id} is already fitted.")
 
         fit_name = fit_config.model_name
         model = pylake.ewlc_odijk_force(name=fit_name) + pylake.force_offset(name=fit_name)
