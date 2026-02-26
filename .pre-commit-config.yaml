@@ -11,17 +11,21 @@ repos:
   # ruff linter
   - repo: https://github.com/astral-sh/ruff-pre-commit
     # Ruff version.
-    rev: v0.15.3
+    rev: v0.15.2
     hooks:
       # Run the linter.
       - id: ruff-check
       # Run the formatter.
       - id: ruff-format
   # pylint linter
-  - repo: https://github.com/pylint-dev/pylint
-    rev: v4.0.5
+  - repo: local
     hooks:
       - id: pylint
+        name: pylint
+        entry: pylint
+        language: system
+        types: [python]
+        require_serial: true
         args:
           []
   - repo: https://github.com/numpy/numpydoc
