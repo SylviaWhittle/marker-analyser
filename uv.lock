@@ -572,6 +572,7 @@ dependencies = [
     { name = "numpy" },
     { name = "pandas" },
     { name = "pydantic" },
+    { name = "pylint" },
 ]
 
 [package.dev-dependencies]
@@ -591,6 +592,7 @@ requires-dist = [
     { name = "numpy" },
     { name = "pandas" },
     { name = "pydantic", specifier = ">=2.12.3" },
+    { name = "pylint", specifier = ">=4.0.2" },
 ]
 
 [package.metadata.requires-dev]
