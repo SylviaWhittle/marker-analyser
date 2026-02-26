@@ -4,6 +4,10 @@ import numpy as np
 import numpy.typing as npt
 from lumicks import pylake
 
+from lumicks.pylake.fitting.parameters import Params
+
+FITTING_PARAMS = ["Lp", "Lc", "St", "f_offset", "kT"]
+
 
 def fit_model_to_data(
     distances: npt.NDArray[np.float64],
@@ -15,7 +19,7 @@ def fit_model_to_data(
     lc_value: float | None = None,
     force_offset_lower_bound: float | None = None,
     force_offset_upper_bound: float | None = None,
-) -> tuple[pylake.FdFit, npt.NDArray[np.float64], pylake.FdFit.params, float]:
+) -> tuple[pylake.FdFit, npt.NDArray[np.float64], Params, float]:
     """
     Fit a model to force-distance data.
 
@@ -42,7 +46,7 @@ def fit_model_to_data(
 
     Returns
     -------
-    tuple[pylake.FdFit, npt.NDArray[np.float64], pylake.FdFit.params, float]
+    tuple[pylake.FdFit, npt.NDArray[np.float64], pylake.fitting.parameters.Params, float]
         A tuple containing the fit object, modelled forces, fit parameters, and fit error.
     """
 
@@ -69,6 +73,6 @@ def fit_model_to_data(
     # the mean value just in case this changes.
     fit_error = np.mean(fit.sigma)
 
-    modelled_forces = model(independent=distances, params=fit.params)
+    modelled_forces: npt.NDArray[np.float64] = model(independent=distances, params=fit.params)
 
     return pylake.FdFit, modelled_forces, fit.params, fit_error

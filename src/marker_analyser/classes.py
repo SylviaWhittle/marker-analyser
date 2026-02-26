@@ -3,6 +3,7 @@
 # pylint: disable=too-many-lines
 
 from pathlib import Path
+from enum import Enum
 
 import re
 from typing import Any, Generator
@@ -16,12 +17,30 @@ from scipy.signal import find_peaks
 # lumicks doesn't provide type stubs, so have ignored mypy warnings for missing imports in the mypy arguments in
 # settings.
 from lumicks import pylake
+from lumicks.pylake.fitting.parameters import Params
 from skimage.morphology import label
 
-from marker_analyser.fitting import fit_model_to_data
 from marker_analyser.plotting import PALETTE
 from marker_analyser.parsers import extract_metadata_from_fd_curve_name_with_regex
 from marker_analyser.data_manipulation import create_df_from_uneven_data
+from marker_analyser.configuration import FitConfig
+
+FITTING_PARAMS = ["Lp", "Lc", "St", "f_offset", "kT"]
+
+
+class FitType(Enum):
+    """Enum to specify whether a fit is individual or global."""
+
+    INDIVIDUAL = 0
+    GLOBAL = 1
+
+
+class FitSegment(Enum):
+    """Enum to track which segment of the data has been fitted."""
+
+    INCREASING = "increasing"
+    DECREASING = "decreasing"
+    BOTH = "both"
 
 
 class MarkerAnalysisBaseModel(BaseModel):
@@ -38,14 +57,6 @@ class ForcePeakModel(MarkerAnalysisBaseModel):
     index: int
 
 
-class FitResult(MarkerAnalysisBaseModel):
-    """A data object to hold fit result data."""
-
-    fitted_forces: npt.NDArray[np.float64]
-    params: Any
-    fit_error: float
-
-
 # pylint: disable=too-many-instance-attributes
 class OscillationModel(MarkerAnalysisBaseModel):
     """A data object to hold oscillation data."""
@@ -53,22 +64,27 @@ class OscillationModel(MarkerAnalysisBaseModel):
     id: str
     curve_id: str
     marker_filename: str
-    metadata: dict[str, float | str | int | None]
-    increasing_force: npt.NDArray[np.float64]
-    increasing_distance: npt.NDArray[np.float64]
-    _increasing_force_raw: npt.NDArray[np.float64] | None = PrivateAttr(None)
-    _increasing_distance_raw: npt.NDArray[np.float64] | None = PrivateAttr(None)
-    decreasing_force: npt.NDArray[np.float64]
-    decreasing_distance: npt.NDArray[np.float64]
-    _decreasing_force_raw: npt.NDArray[np.float64] | None = PrivateAttr(None)
-    _decreasing_distance_raw: npt.NDArray[np.float64] | None = PrivateAttr(None)
+    fit_type: FitType | None = None
+    fit_segment: FitSegment | None = None
+    metadata: dict[str, float | str | int | bool | None]
+    forces_increasing: npt.NDArray[np.float64]
+    distances_increasing: npt.NDArray[np.float64]
+    _forces_raw_increasing: npt.NDArray[np.float64] | None = PrivateAttr(None)
+    _distances_raw_increasing: npt.NDArray[np.float64] | None = PrivateAttr(None)
+    forces_decreasing: npt.NDArray[np.float64]
+    distances_decreasing: npt.NDArray[np.float64]
+    _forces_raw_decreasing: npt.NDArray[np.float64] | None = PrivateAttr(None)
+    _distances_raw_decreasing: npt.NDArray[np.float64] | None = PrivateAttr(None)
 
     # Fitting
     force_peaks: list[ForcePeakModel] | None = None
     num_peaks: int | None = None
-    increasing_fit: FitResult | None = None
-    decreasing_fit: FitResult | None = None
-    fit_both: FitResult | None = None
+    fit_individual: pylake.FdFit | None = None
+    fit_individual_config: FitConfig | None = None
+    fit_params: Params | None = None
+    fit_error: float | None = None
+    fitted_forces_increasing: npt.NDArray[np.float64] | None = None
+    fitted_forces_decreasing: npt.NDArray[np.float64] | None = None
 
     # Masking
     force_maximum: float | None = None
@@ -87,15 +103,15 @@ class OscillationModel(MarkerAnalysisBaseModel):
             Unsure, was in an example I found.
         """
         # Create copies of the raw data for masking purposes
-        self._increasing_force_raw = self.increasing_force.copy()
-        self._increasing_distance_raw = self.increasing_distance.copy()
-        self._decreasing_force_raw = self.decreasing_force.copy()
-        self._decreasing_distance_raw = self.decreasing_distance.copy()
+        self._forces_raw_increasing = self.forces_increasing.copy()
+        self._distances_raw_increasing = self.distances_increasing.copy()
+        self._forces_raw_decreasing = self.forces_decreasing.copy()
+        self._distances_raw_decreasing = self.distances_decreasing.copy()
         # Create mask of the data based on thresholds
         self.calculate_masks()
 
     @property
-    def increasing_force_raw(self) -> npt.NDArray[np.float64]:
+    def forces_raw_increasing(self) -> npt.NDArray[np.float64]:
         """
         Get the raw increasing force data.
 
@@ -104,11 +120,11 @@ class OscillationModel(MarkerAnalysisBaseModel):
         npt.NDArray[np.float64]
             The raw increasing force data.
         """
-        assert self._increasing_force_raw is not None
-        return self._increasing_force_raw
+        assert self._forces_raw_increasing is not None
+        return self._forces_raw_increasing
 
     @property
-    def increasing_distance_raw(self) -> npt.NDArray[np.float64]:
+    def distances_raw_increasing(self) -> npt.NDArray[np.float64]:
         """
         Get the raw increasing distance data.
 
@@ -117,11 +133,11 @@ class OscillationModel(MarkerAnalysisBaseModel):
         npt.NDArray[np.float64]
             The raw increasing distance data.
         """
-        assert self._increasing_distance_raw is not None
-        return self._increasing_distance_raw
+        assert self._distances_raw_increasing is not None
+        return self._distances_raw_increasing
 
     @property
-    def decreasing_force_raw(self) -> npt.NDArray[np.float64]:
+    def forces_raw_decreasing(self) -> npt.NDArray[np.float64]:
         """
         Get the raw decreasing force data.
 
@@ -130,11 +146,11 @@ class OscillationModel(MarkerAnalysisBaseModel):
         npt.NDArray[np.float64]
             The raw decreasing force data.
         """
-        assert self._decreasing_force_raw is not None
-        return self._decreasing_force_raw
+        assert self._forces_raw_decreasing is not None
+        return self._forces_raw_decreasing
 
     @property
-    def decreasing_distance_raw(self) -> npt.NDArray[np.float64]:
+    def distances_raw_decreasing(self) -> npt.NDArray[np.float64]:
         """
         Get the raw decreasing distance data.
 
@@ -143,8 +159,8 @@ class OscillationModel(MarkerAnalysisBaseModel):
         npt.NDArray[np.float64]
             The raw decreasing distance data.
         """
-        assert self._decreasing_distance_raw is not None
-        return self._decreasing_distance_raw
+        assert self._distances_raw_decreasing is not None
+        return self._distances_raw_decreasing
 
     # Getter for force_both (both increasing and decreasing concatenated)
     @property
@@ -157,7 +173,19 @@ class OscillationModel(MarkerAnalysisBaseModel):
         npt.NDArray[np.float64]
             The concatenated force data.
         """
-        return np.concatenate([self.increasing_force, self.decreasing_force])
+        return np.concatenate([self.forces_increasing, self.forces_decreasing])
+
+    @property
+    def forces_raw_both(self) -> npt.NDArray[np.float64]:
+        """
+        Get the concatenated raw force data (both increasing and decreasing).
+
+        Returns
+        -------
+        npt.NDArray[np.float64]
+            The concatenated raw force data.
+        """
+        return np.concatenate([self.forces_raw_increasing, self.forces_raw_decreasing])
 
     # Getter for distance_both (both increasing and decreasing concatenated)
     @property
@@ -170,14 +198,52 @@ class OscillationModel(MarkerAnalysisBaseModel):
         npt.NDArray[np.float64]
             The concatenated distance data.
         """
-        return np.concatenate([self.increasing_distance, self.decreasing_distance])
+        return np.concatenate([self.distances_increasing, self.distances_decreasing])
+
+    @property
+    def distances_raw_both(self) -> npt.NDArray[np.float64]:
+        """
+        Get the concatenated raw distance data (both increasing and decreasing).
+
+        Returns
+        -------
+        npt.NDArray[np.float64]
+            The concatenated raw distance data.
+        """
+        return np.concatenate([self.distances_raw_increasing, self.distances_raw_decreasing])
+
+    @property
+    def fitted_forces_both(self) -> npt.NDArray[np.float64] | None:
+        """
+        Get the concatenated fitted force data (both increasing and decreasing).
+
+        Returns
+        -------
+        npt.NDArray[np.float64] | None
+            The concatenated fitted force data, or None if either fit is not available.
+        """
+        if self.fitted_forces_increasing is not None and self.fitted_forces_decreasing is not None:
+            return np.concatenate([self.fitted_forces_increasing, self.fitted_forces_decreasing])
+        return None
+
+    @property
+    def is_fitted(self) -> bool:
+        """
+        Check if the oscillation has been fitted.
+
+        Returns
+        -------
+        bool
+            True if the oscillation has been fitted, False otherwise.
+        """
+        return self.fit_type is not None
 
     def __repr__(self) -> str:
-        increasing_fit_err_str = f"err: {self.increasing_fit.fit_error:.2f}" if self.increasing_fit else ""
-        increasing_fit_str = f"increasing fit: {self.increasing_fit is not None} {increasing_fit_err_str}"
-        decreasing_fit_err_str = f"err: {self.decreasing_fit.fit_error:.2f}" if self.decreasing_fit else ""
-        decreasing_fit_str = f"decreasing fit: {self.decreasing_fit is not None} {decreasing_fit_err_str}"
-        return f"OscillationModel | num_peaks: {self.num_peaks} | {increasing_fit_str} | {decreasing_fit_str}"
+        return (
+            f"OscillationModel | num_peaks: {self.num_peaks} | fitted: {self.is_fitted} | fit_type: "
+            f"{self.fit_type} | fit_segment: {self.fit_segment} | fit_error: "
+            f"{self.fit_error} | metadata: {self.metadata}"
+        )
 
     def __str__(self) -> str:
         """
@@ -201,24 +267,46 @@ class OscillationModel(MarkerAnalysisBaseModel):
         """
         printer.text(repr(self))
 
+    def get_segment(self, segment: str) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+        """
+        Get the relevant segment of the oscillation data.
+
+        Parameters
+        ----------
+        segment : str
+            The segment to get, either "increasing" or "decreasing" or "both".
+
+        Returns
+        -------
+        tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]
+            The distance and force data for the specified segment.
+        """
+        if segment == "increasing":
+            return self.distances_increasing, self.forces_increasing
+        if segment == "decreasing":
+            return self.distances_decreasing, self.forces_decreasing
+        if segment == "both":
+            return self.distances_both, self.forces_both
+        raise ValueError(f"Invalid segment: {segment}. Must be either 'increasing', 'decreasing', or 'both'.")
+
     def calculate_masks(
         self,
     ) -> None:
         """Calculate masks for the oscillation data based on thresholds."""
-        increasing_mask = np.ones_like(self.increasing_force, dtype=bool)
-        decreasing_mask = np.ones_like(self.decreasing_force, dtype=bool)
+        increasing_mask = np.ones_like(self.forces_increasing, dtype=bool)
+        decreasing_mask = np.ones_like(self.forces_decreasing, dtype=bool)
         if self.force_maximum is not None:
-            increasing_mask &= self.increasing_force <= self.force_maximum
-            decreasing_mask &= self.decreasing_force <= self.force_maximum
+            increasing_mask &= self.forces_increasing <= self.force_maximum
+            decreasing_mask &= self.forces_decreasing <= self.force_maximum
         if self.distance_minimum is not None:
-            increasing_mask &= self.increasing_distance >= self.distance_minimum
-            decreasing_mask &= self.decreasing_distance >= self.distance_minimum
+            increasing_mask &= self.distances_increasing >= self.distance_minimum
+            decreasing_mask &= self.distances_decreasing >= self.distance_minimum
         self.increasing_mask = increasing_mask
         self.decreasing_mask = decreasing_mask
-        self.increasing_force = self.increasing_force[self.increasing_mask]
-        self.increasing_distance = self.increasing_distance[self.increasing_mask]
-        self.decreasing_force = self.decreasing_force[self.decreasing_mask]
-        self.decreasing_distance = self.decreasing_distance[self.decreasing_mask]
+        self.forces_increasing = self.forces_increasing[self.increasing_mask]
+        self.distances_increasing = self.distances_increasing[self.increasing_mask]
+        self.forces_decreasing = self.forces_decreasing[self.decreasing_mask]
+        self.distances_decreasing = self.distances_decreasing[self.decreasing_mask]
 
     # pylint: disable=too-many-arguments
     # pylint: disable=too-many-locals
@@ -253,8 +341,8 @@ class OscillationModel(MarkerAnalysisBaseModel):
         curve_id : str
             The ID of the force-distance curve containing the oscillation.
         """
-        increasing_force = self.increasing_force
-        increasing_distance = self.increasing_distance
+        increasing_force = self.forces_increasing
+        increasing_distance = self.distances_increasing
         peak_indexes, _ = find_peaks(
             increasing_force,
             height=peak_height,
@@ -360,8 +448,8 @@ class OscillationModel(MarkerAnalysisBaseModel):
             True if the peak does not meet the criteria and should be deleted, False otherwise.
         """
         # find the minimum force between the previous peak and this peak
-        oscillation_distance_data = self.increasing_distance
-        oscillation_force_data = self.increasing_force
+        oscillation_distance_data = self.distances_increasing
+        oscillation_force_data = self.forces_increasing
         between_peak_minimum_force_index = (
             np.argmin(oscillation_force_data[previous_peak_index : peak_index + 1]) + previous_peak_index
         )
@@ -396,6 +484,7 @@ class OscillationModel(MarkerAnalysisBaseModel):
         show: bool = True,
         increasing_segment: bool = True,
         decreasing_segment: bool = True,
+        plot_label: str | None = None,
     ) -> None:
         """
         Plot the oscillation's force-distance data.
@@ -412,16 +501,23 @@ class OscillationModel(MarkerAnalysisBaseModel):
             Whether to plot the increasing segment.
         decreasing_segment : bool, optional
             Whether to plot the decreasing segment.
+        plot_label : str, optional
+            The label to use for the plot legend.
         """
 
         if increasing_segment:
-            plt.plot(self.increasing_distance, self.increasing_force, color=increasing_colour, alpha=0.5)
-            if self.increasing_fit is not None:
-                plt.plot(self.increasing_distance, self.increasing_fit.fitted_forces, color=increasing_colour, alpha=1)
+            plt.plot(
+                self.distances_increasing, self.forces_increasing, color=increasing_colour, alpha=0.5, label=plot_label
+            )
+            # if there is fitted data, plot it
+            if self.fitted_forces_increasing is not None:
+                plt.plot(self.distances_increasing, self.fitted_forces_increasing, color=increasing_colour, alpha=1)
         if decreasing_segment:
-            plt.plot(self.decreasing_distance, self.decreasing_force, color=decreasing_colour, alpha=0.5)
-            if self.decreasing_fit is not None:
-                plt.plot(self.decreasing_distance, self.decreasing_fit.fitted_forces, color=decreasing_colour, alpha=1)
+            plt.plot(
+                self.distances_decreasing, self.forces_decreasing, color=decreasing_colour, alpha=0.5, label=plot_label
+            )
+            if self.fitted_forces_decreasing is not None:
+                plt.plot(self.distances_decreasing, self.fitted_forces_decreasing, color=decreasing_colour, alpha=1)
         plt.xlabel("Distance (um)")
         plt.ylabel("Force (pN)")
         plt.title("")
@@ -430,103 +526,75 @@ class OscillationModel(MarkerAnalysisBaseModel):
 
     def fit_model(
         self,
-        segment: str,
-        lp_value: float | None = None,
-        lp_lower_bound: float | None = None,
-        lp_upper_bound: float | None = None,
-        lc_value: float | None = None,
-        force_offset_lower_bound: float | None = None,
-        force_offset_upper_bound: float | None = None,
+        fit_config: FitConfig,
     ) -> None:
         """
         Fit the specified segment of the oscillation.
 
         Parameters
         ----------
-        segment : str
-            The segment to fit, either "increasing" or "decreasing" or "both".
-        lp_value : float | None
-            Initial guess for persistence length.
-        lp_lower_bound : float | None
-            Lower bound for persistence length.
-        lp_upper_bound : float | None
-            Upper bound for persistence length.
-        lc_value : float | None
-            Initial guess for contour length.
-        force_offset_lower_bound : float | None
-            Lower bound for force offset.
-        force_offset_upper_bound : float | None
-            Upper bound for force offset.
+        fit_config : FitConfig
+            The configuration for the fit to be performed.
         """
+
+        fit_name = fit_config.model_name
+
+        model = pylake.ewlc_odijk_force(name=fit_name) + pylake.force_offset(name=fit_name)
+        fit = pylake.FdFit(model)
+
+        segment = fit_config.segment
+        distances, forces = self.get_segment(segment)
+        fit.add_data(name="data", f=forces, d=distances)
+
+        # configure the parameters
+        for param, param_config in fit_config.params_config.items():
+            assert param_config.global_param is False, f"Parameter {param} can't be a global param for individual fits."
+            if param_config.initial_value is not None:
+                fit[f"{fit_name}/{param}"].value = param_config.initial_value
+            if param_config.lower_bound is not None:
+                fit[f"{fit_name}/{param}"].lower_bound = param_config.lower_bound
+            if param_config.upper_bound is not None:
+                fit[f"{fit_name}/{param}"].upper_bound = param_config.upper_bound
+            fit[f"{fit_name}/{param}"].fixed = param_config.fixed
+
+        # optionally auto-detect the force offset and fix that value
+        if fit_config.auto_calculate_and_fix_f_offset:
+            # calculate the initial force offset based on the specified distance range
+            mask = (distances >= fit_config.f_offset_auto_detect_distance_range_um[0]) & (
+                distances <= fit_config.f_offset_auto_detect_distance_range_um[1]
+            )
+            force_mask = forces[mask]
+
+            # calculate the median force and use that as the initial force offset
+            calculated_f_offset = np.median(force_mask)
+
+            # set the value
+            fit[f"{fit_name}/f_offset"].value = calculated_f_offset
+            # set it to not be fitted
+            fit[f"{fit_name}/f_offset"].fixed = True
+
+        fit.fit()
+        self.fit_individual = fit
+        self.fit_params = fit.params
+        self.fit_error = np.mean(fit.sigma)
+        modelled_forces: npt.NDArray[np.float64] = model(independent=distances, params=fit.params)
         if segment == "increasing":
-            try:
-                _fit, fitted_forces, fit_params, fit_error = fit_model_to_data(
-                    distances=self.increasing_distance,
-                    forces=self.increasing_force,
-                    model=pylake.ewlc_odijk_force,
-                    lp_value=lp_value,
-                    lp_lower_bound=lp_lower_bound,
-                    lp_upper_bound=lp_upper_bound,
-                    lc_value=lc_value,
-                    force_offset_lower_bound=force_offset_lower_bound,
-                    force_offset_upper_bound=force_offset_upper_bound,
-                )
-            except np.linalg.LinAlgError:
-                print("Fit failed due to nonconvergence. Skipping.")
-                return
-            self.increasing_fit = FitResult(
-                fitted_forces=fitted_forces,
-                params=fit_params,
-                fit_error=fit_error,
-            )
+            self.fitted_forces_increasing = modelled_forces
         elif segment == "decreasing":
-            try:
-                _fit, fitted_forces, fit_params, fit_error = fit_model_to_data(
-                    distances=self.decreasing_distance,
-                    forces=self.decreasing_force,
-                    model=pylake.ewlc_odijk_force,
-                    lp_value=lp_value,
-                    lp_lower_bound=lp_lower_bound,
-                    lp_upper_bound=lp_upper_bound,
-                    lc_value=lc_value,
-                    force_offset_lower_bound=force_offset_lower_bound,
-                    force_offset_upper_bound=force_offset_upper_bound,
-                )
-            except np.linalg.LinAlgError:
-                print("Fit failed due to nonconvergence. Skipping.")
-                return
-            self.decreasing_fit = FitResult(
-                fitted_forces=fitted_forces,
-                params=fit_params,
-                fit_error=fit_error,
-            )
+            self.fitted_forces_decreasing = modelled_forces
         elif segment == "both":
-            try:
-                _fit, fitted_forces, fit_params, fit_error = fit_model_to_data(
-                    distances=self.distances_both,
-                    forces=self.forces_both,
-                    model=pylake.ewlc_odijk_force,
-                    lp_value=lp_value,
-                    lp_lower_bound=lp_lower_bound,
-                    lp_upper_bound=lp_upper_bound,
-                    lc_value=lc_value,
-                    force_offset_lower_bound=force_offset_lower_bound,
-                    force_offset_upper_bound=force_offset_upper_bound,
-                )
-            except np.linalg.LinAlgError:
-                print("Fit failed due to nonconvergence. Skipping.")
-                return
-            self.fit_both = FitResult(
-                fitted_forces=fitted_forces,
-                params=fit_params,
-                fit_error=fit_error,
-            )
+            self.fitted_forces_increasing = modelled_forces[: len(self.forces_increasing)]
+            self.fitted_forces_decreasing = modelled_forces[len(self.forces_increasing) :]
+        else:
+            raise ValueError(f"Invalid segment: {segment}. Must be either 'increasing', 'decreasing', or 'both'.")
 
 
 class OscillationCollection(MarkerAnalysisBaseModel):
     """A data object to hold many oscillations together as a dataset."""
 
     oscillations: dict[str, OscillationModel]
+    global_fit: pylake.FdFit | None = None
+    fit_config: FitConfig | None = None
 
     def __repr__(self) -> str:
         num_oscillations = len(self.oscillations)
@@ -664,95 +732,128 @@ class OscillationCollection(MarkerAnalysisBaseModel):
         """
         return self.oscillations.get(key, default)
 
-    def save_fitting_parameters_to_csv_file(self, file_path: Path, segment: str) -> None:
+    def individual_fit_save_parameters_to_csv_file(self, file_path: Path) -> None:
         """
-        Save the fitting parameters of the oscillations in the collection to a CSV file.
+        Save the fitting parameters for oscillations fitted with individual models in the collection to a CSV file.
 
         Parameters
         ----------
         file_path : Path
             The path to the CSV file to save the data to.
-        segment : str
-            The segment to save, either "increasing" or "decreasing" or "both".
         """
 
         # format for csv: columns: oscillation_id, curve_id, marker_filename, lp_value ...
         data_to_save = []
         for oscillation_id, oscillation in self.oscillations.items():
-            if segment == "increasing" and oscillation.increasing_fit is not None:
-                fit_params = oscillation.increasing_fit.params
-                data_to_save.append(
-                    {
-                        "oscillation_id": oscillation_id,
-                        "curve_id": oscillation.curve_id,
-                        "marker_filename": oscillation.marker_filename,
-                        "segment": "increasing",
-                        "lp_value": fit_params["fit/Lp"].value,
-                        "lp_error": fit_params["fit/Lp"].stderr,
-                        "lc_value": fit_params["fit/Lc"].value,
-                        "lc_error": fit_params["fit/Lc"].stderr,
-                        "st_value": fit_params["fit/St"].value,
-                        "st_error": fit_params["fit/St"].stderr,
-                        "force_offset_value": fit_params["fit/f_offset"].value,
-                        "force_offset_error": fit_params["fit/f_offset"].stderr,
-                        "kT_value": fit_params["kT"].value,
-                        "kT_error": fit_params["kT"].stderr,
-                        **oscillation.metadata,
-                    }
-                )
-            elif segment == "decreasing" and oscillation.decreasing_fit is not None:
-                fit_params = oscillation.decreasing_fit.params
-                data_to_save.append(
-                    {
-                        "oscillation_id": oscillation_id,
-                        "curve_id": oscillation.curve_id,
-                        "marker_filename": oscillation.marker_filename,
-                        "segment": "decreasing",
-                        "lp_value": fit_params["fit/Lp"].value,
-                        "lp_error": fit_params["fit/Lp"].stderr,
-                        "lc_value": fit_params["fit/Lc"].value,
-                        "lc_error": fit_params["fit/Lc"].stderr,
-                        "st_value": fit_params["fit/St"].value,
-                        "st_error": fit_params["fit/St"].stderr,
-                        "force_offset_value": fit_params["fit/f_offset"].value,
-                        "force_offset_error": fit_params["fit/f_offset"].stderr,
-                        "kT_value": fit_params["kT"].value,
-                        "kT_error": fit_params["kT"].stderr,
-                        **oscillation.metadata,
-                    }
-                )
-            elif segment == "both" and oscillation.fit_both is not None:
-                fit_params = oscillation.fit_both.params
-                data_to_save.append(
-                    {
-                        "oscillation_id": oscillation_id,
-                        "curve_id": oscillation.curve_id,
-                        "marker_filename": oscillation.marker_filename,
-                        "segment": "both",
-                        "lp_value": fit_params["fit/Lp"].value,
-                        "lp_error": fit_params["fit/Lp"].stderr,
-                        "lc_value": fit_params["fit/Lc"].value,
-                        "lc_error": fit_params["fit/Lc"].stderr,
-                        "st_value": fit_params["fit/St"].value,
-                        "st_error": fit_params["fit/St"].stderr,
-                        "force_offset_value": fit_params["fit/f_offset"].value,
-                        "force_offset_error": fit_params["fit/f_offset"].stderr,
-                        "kT_value": fit_params["kT"].value,
-                        "kT_error": fit_params["kT"].stderr,
-                        **oscillation.metadata,
-                    }
-                )
+            assert oscillation.fit_type == FitType.INDIVIDUAL
+            assert oscillation.fit_segment is not None, f"Oscillation {oscillation_id} has no fit segment specified."
+            segment = oscillation.fit_segment.value
+            assert oscillation.fit_params is not None, f"Oscillation {oscillation_id} has no fit parameters."
+            fit_params = oscillation.fit_params
+            assert oscillation.fit_individual_config is not None, f"Oscillation {oscillation_id} has no fit config."
+            fit_config = oscillation.fit_individual_config
+            fit_name = fit_config.model_name
+
+            # note that all params are individual in this case since one model per oscillation
+
+            data_entry: dict[str, str | float | bool | int | None] = {
+                "oscillation_id": oscillation_id,
+                "curve_id": oscillation.curve_id,
+                "marker_filename": oscillation.marker_filename,
+                "segment": segment,
+                "fit_name": fit_name,
+                "fit_type": oscillation.fit_type.value,
+                "lp_value": fit_params["fit/Lp"].value,
+                "lp_error": fit_params["fit/Lp"].stderr,
+                "lc_value": fit_params["fit/Lc"].value,
+                "lc_error": fit_params["fit/Lc"].stderr,
+                "st_value": fit_params["fit/St"].value,
+                "st_error": fit_params["fit/St"].stderr,
+                "force_offset_value": fit_params["fit/f_offset"].value,
+                "force_offset_error": fit_params["fit/f_offset"].stderr,
+                "kT_value": fit_params["kT"].value,
+                "kT_error": fit_params["kT"].stderr,
+                **oscillation.metadata,
+            }
+            data_to_save.append(data_entry)
+        # Create dataframe from the data
+        df = pd.DataFrame(data_to_save)
+        df.to_csv(file_path, index=False)
+
+    def global_fit_save_parameters_to_csv_file(self, file_path: Path) -> None:
+        """
+        Save the fitting parameters for the global fit of the collection to a CSV file.
+
+        Parameters
+        ----------
+        file_path : Path
+            The path to the CSV file to save the data to.
+        """
+        assert self.global_fit is not None, "No global fit found for the collection."
+        assert self.fit_config is not None, "No fit config found for the collection."
+        fit_name = self.fit_config.model_name
+        fit_params = self.global_fit.params
+
+        data_to_save = []
+
+        global_params = []
+        individual_params = []
+
+        # determine if each parameter is shared or individual
+        for param_name in FITTING_PARAMS:
+            if param_name == "kT":
+                param_string_name = "kT"
+            else:
+                param_string_name = f"{fit_name}/{param_name}"
+            if param_string_name not in fit_params:
+                individual_params.append(param_string_name)
+            else:
+                global_params.append(param_string_name)
+
+        for oscillation_id, oscillation in self.oscillations.items():
+            assert oscillation.fit_type is not None
+            fit_type = oscillation.fit_type.value
+            data_entry: dict[str, str | float | bool | int | None] = {
+                "oscillation_id": oscillation_id,
+                "curve_id": oscillation.curve_id,
+                "marker_filename": oscillation.marker_filename,
+                "segment": self.fit_config.segment,
+                "fit_name": fit_name,
+                "fit_type": fit_type,
+            }
+            for param_string_name in global_params:
+                data_entry[f"{param_string_name}_value"] = fit_params[param_string_name].value
+                data_entry[f"{param_string_name}_is_global"] = True
+                data_entry[f"{param_string_name}_is_fixed"] = fit_params[param_string_name].fixed
+                data_entry[f"{param_string_name}_error"] = fit_params[param_string_name].stderr
+
+            for param_string_name in individual_params:
+                individual_param_string_name = f"{param_string_name}_{oscillation_id}"
+                if individual_param_string_name not in fit_params:
+                    raise ValueError(
+                        f"Individual parameter {individual_param_string_name} not found in global fit parameters for "
+                        f"oscillation {oscillation_id}."
+                    )
+                data_entry[f"{param_string_name}_value"] = fit_params[individual_param_string_name].value
+                data_entry[f"{param_string_name}_is_global"] = False
+                data_entry[f"{param_string_name}_is_fixed"] = fit_params[individual_param_string_name].fixed
+                data_entry[f"{param_string_name}_error"] = fit_params[individual_param_string_name].stderr
+
+            # add metadata
+            data_entry.update(oscillation.metadata)
+
+            data_to_save.append(data_entry)
 
         # Create dataframe from the data
         df = pd.DataFrame(data_to_save)
         df.to_csv(file_path, index=False)
 
     # pylint: disable=too-many-branches
-    def save_dataset_data_to_csv_file(
+    def save_collection_data_to_csv_file(
         self, file_path: Path, segment: str, fitted_or_measured: str = "measured"
     ) -> None:
         """
-        Save the dataset data to a CSV file.
+        Save the collection data to a CSV file.
 
         Parameters
         ----------
@@ -768,43 +869,28 @@ class OscillationCollection(MarkerAnalysisBaseModel):
         for oscillation_id, oscillation in self.oscillations.items():
             if segment == "increasing":
                 if fitted_or_measured == "measured":
-                    data_to_save[f"{oscillation_id}_increasing_distances"] = oscillation.increasing_distance
-                    data_to_save[f"{oscillation_id}_increasing_forces"] = oscillation.increasing_force
+                    data_to_save[f"{oscillation_id}_increasing_distances"] = oscillation.distances_increasing
+                    data_to_save[f"{oscillation_id}_increasing_forces"] = oscillation.forces_increasing
                 elif fitted_or_measured == "fitted":
-                    if oscillation.increasing_fit is not None:
-                        data_to_save[f"{oscillation_id}_increasing_distances"] = oscillation.increasing_distance
-                        data_to_save[f"{oscillation_id}_increasing_fitted_forces"] = (
-                            oscillation.increasing_fit.fitted_forces
-                        )
-                    else:
-                        print(
-                            f"Skipping oscillation {oscillation_id} increasing segment fitted data, no fit available."
-                        )
+                    assert oscillation.fitted_forces_increasing is not None
+                    data_to_save[f"{oscillation_id}_increasing_distances"] = oscillation.distances_increasing
+                    data_to_save[f"{oscillation_id}_increasing_fitted_forces"] = oscillation.fitted_forces_increasing
             elif segment == "decreasing":
                 if fitted_or_measured == "measured":
-                    data_to_save[f"{oscillation_id}_decreasing_distances"] = oscillation.decreasing_distance
-                    data_to_save[f"{oscillation_id}_decreasing_forces"] = oscillation.decreasing_force
+                    data_to_save[f"{oscillation_id}_decreasing_distances"] = oscillation.distances_decreasing
+                    data_to_save[f"{oscillation_id}_decreasing_forces"] = oscillation.forces_decreasing
                 elif fitted_or_measured == "fitted":
-                    if oscillation.decreasing_fit is not None:
-                        data_to_save[f"{oscillation_id}_decreasing_distances"] = oscillation.decreasing_distance
-                        data_to_save[f"{oscillation_id}_decreasing_fitted_forces"] = (
-                            oscillation.decreasing_fit.fitted_forces
-                        )
-                    else:
-                        print(
-                            f"Skipping oscillation {oscillation_id} decreasing segment fitted data, no fit available."
-                        )
+                    assert oscillation.fitted_forces_decreasing is not None
+                    data_to_save[f"{oscillation_id}_decreasing_distances"] = oscillation.distances_decreasing
+                    data_to_save[f"{oscillation_id}_decreasing_fitted_forces"] = oscillation.fitted_forces_decreasing
             elif segment == "both":
                 if fitted_or_measured == "measured":
                     data_to_save[f"{oscillation_id}_both_distances"] = oscillation.distances_both
                     data_to_save[f"{oscillation_id}_both_forces"] = oscillation.forces_both
                 elif fitted_or_measured == "fitted":
-                    if oscillation.fit_both is not None:
-                        data_to_save[f"{oscillation_id}_both_distances"] = oscillation.distances_both
-                        data_to_save[f"{oscillation_id}_both_fitted_forces"] = oscillation.fit_both.fitted_forces
-                    else:
-                        print(f"Skipping oscillation {oscillation_id} both segment fitted data, no fit available.")
-
+                    assert oscillation.fitted_forces_both is not None
+                    data_to_save[f"{oscillation_id}_both_distances"] = oscillation.distances_both
+                    data_to_save[f"{oscillation_id}_both_fitted_forces"] = oscillation.fitted_forces_both
         # Create dataframe from the data, note that the columns are not of equal length
         df = create_df_from_uneven_data(data_dict=data_to_save)
         df.to_csv(file_path, index=False)
@@ -814,6 +900,7 @@ class OscillationCollection(MarkerAnalysisBaseModel):
         increasing_segment: bool = True,
         decreasing_segment: bool = True,
         random_colours: bool = False,
+        legend: bool = True,
     ) -> None:
         """
         Plot all oscillations in the dataset on a single figure.
@@ -826,8 +913,10 @@ class OscillationCollection(MarkerAnalysisBaseModel):
             Whether to plot the decreasing segment.
         random_colours : bool, optional
             Whether to use random colours for each oscillation.
+        legend : bool, optional
+            Whether to add a legend to the plot.
         """
-        for _oscillation_id, oscillation in self.oscillations.items():
+        for oscillation_id, oscillation in self.oscillations.items():
             if random_colours:
                 colour = np.random.choice(PALETTE)
                 oscillation.plot(
@@ -836,55 +925,131 @@ class OscillationCollection(MarkerAnalysisBaseModel):
                     decreasing_segment=decreasing_segment,
                     increasing_colour=colour,
                     decreasing_colour=colour,
+                    plot_label=oscillation_id,
                 )
             else:
                 oscillation.plot(
                     show=False,
                     increasing_segment=increasing_segment,
                     decreasing_segment=decreasing_segment,
+                    plot_label=oscillation_id,
                 )
+        if legend:
+            plt.legend(
+                # outside the chart on the right
+                bbox_to_anchor=(1.05, 1),
+            )
         plt.show()
 
-    def fit_model_to_all(
+    def fit_individual_model_to_each(
         self,
-        segment: str,
-        lp_value: float | None = None,
-        lp_lower_bound: float | None = None,
-        lp_upper_bound: float | None = None,
-        lc_value: float | None = None,
-        force_offset_lower_bound: float | None = None,
-        force_offset_upper_bound: float | None = None,
+        fit_config: FitConfig,
     ) -> None:
         """
-        Fit the specified segment of all oscillations in the dataset.
+        Fit the specified segment of all oscillations in the dataset using one model per oscillation.
 
         Parameters
         ----------
-        segment : str
-            The segment to fit, either "increasing" or "decreasing".
-        lp_value : float | None
-            Initial guess for persistence length.
-        lp_lower_bound : float | None
-            Lower bound for persistence length.
-        lp_upper_bound : float | None
-            Upper bound for persistence length.
-        lc_value : float | None
-            Initial guess for contour length.
-        force_offset_lower_bound : float | None
-            Lower bound for force offset.
-        force_offset_upper_bound : float | None
-            Upper bound for force offset.
+        fit_config : FitConfig
+            The configuration for the fit, including initial parameter guesses and bounds.
         """
+
+        for oscillation_id, oscillation in self.oscillations.items():
+            if oscillation.is_fitted:
+                raise ValueError(f"Oscillation {oscillation_id} is already fitted.")
         for _oscillation_id, oscillation in self.oscillations.items():
-            oscillation.fit_model(
-                segment=segment,
-                lp_value=lp_value,
-                lp_lower_bound=lp_lower_bound,
-                lp_upper_bound=lp_upper_bound,
-                lc_value=lc_value,
-                force_offset_lower_bound=force_offset_lower_bound,
-                force_offset_upper_bound=force_offset_upper_bound,
+            oscillation.fit_model(fit_config=fit_config)
+
+    # pylint: disable=too-many-locals
+    def fit_global_model_to_all(
+        self,
+        fit_config: FitConfig,
+    ) -> None:
+        """
+        Fit the specified segment of all oscillations in the dataset using a single global model.
+
+        Parameters
+        ----------
+        fit_config : FitConfig
+            The configuration for the fit, including initial parameter guesses and bounds.
+        """
+
+        for oscillation_id, oscillation in self.oscillations.items():
+            if oscillation.is_fitted:
+                raise ValueError(f"Oscillation {oscillation_id} is already fitted.")
+
+        fit_name = fit_config.model_name
+        model = pylake.ewlc_odijk_force(name=fit_name) + pylake.force_offset(name=fit_name)
+        fit = pylake.FdFit(model)
+
+        for oscillation_id, oscillation in self.oscillations.items():
+            individual_params = {}
+
+            # create any individual parameters needed
+            for param, param_config in fit_config.params_config.items():
+                if not param_config.global_param:
+                    individual_params[f"{fit_name}/{param}"] = f"{fit_name}/{param}_{oscillation_id}"
+
+            # if auto calculating the force offsets, will need to set the parameter to be individual
+            if fit_config.auto_calculate_and_fix_f_offset:
+                individual_params[f"{fit_name}/f_offset"] = f"{fit_name}/f_offset_{oscillation_id}"
+
+            # Add data to the model
+            distances, forces = oscillation.get_segment(fit_config.segment)
+            fit.add_data(
+                name=f"Oscillation {oscillation_id}, segment {fit_config.segment}",
+                f=forces,
+                d=distances,
+                params=individual_params,
             )
+
+            # set individual params for this oscillation if the param is not global
+            for param, param_config in fit_config.params_config.items():
+                if not param_config.global_param:
+                    param_name = f"{fit_name}/{param}_{oscillation_id}"
+                    if param_config.initial_value is not None:
+                        fit[param_name].value = param_config.initial_value
+                    if param_config.lower_bound is not None:
+                        fit[param_name].lower_bound = param_config.lower_bound
+                    if param_config.upper_bound is not None:
+                        fit[param_name].upper_bound = param_config.upper_bound
+                    fit[param_name].fixed = param_config.fixed
+
+            # optionally auto-detect the force offset and fix that value
+            if fit_config.auto_calculate_and_fix_f_offset:
+                # calculate the initial force offset based on the specified distance range
+                mask = (distances >= fit_config.f_offset_auto_detect_distance_range_um[0]) & (
+                    distances <= fit_config.f_offset_auto_detect_distance_range_um[1]
+                )
+                force_mask = forces[mask]
+
+                # calculate the median force and use that as the initial force offset
+                calculated_f_offset = np.median(force_mask)
+
+                # set the value
+                fit[f"{fit_name}/f_offset_{oscillation_id}"].value = calculated_f_offset
+                # set it to not be fitted
+                fit[f"{fit_name}/f_offset_{oscillation_id}"].fixed = True
+
+        # set the global params
+        for param, param_config in fit_config.params_config.items():
+            if param_config.global_param:
+                param_name = f"{fit_name}/{param}"
+                if param_config.initial_value is not None:
+                    fit[param_name].value = param_config.initial_value
+                if param_config.lower_bound is not None:
+                    fit[param_name].lower_bound = param_config.lower_bound
+                if param_config.upper_bound is not None:
+                    fit[param_name].upper_bound = param_config.upper_bound
+                fit[param_name].fixed = param_config.fixed
+
+        fit.fit()
+
+        print(f"Fitted global model to {len(self.oscillations)} for segment {fit_config.segment}. Results:")
+        print(fit)
+
+        self.global_fit = fit
+        self.fit_config = fit_config
 
 
 class ReducedFDCurveModel(MarkerAnalysisBaseModel):
@@ -1292,10 +1457,10 @@ class ReducedMarkerModel(MarkerAnalysisBaseModel):
                 curve_id=curve_id,
                 marker_filename=marker_filename,
                 metadata=metadata,
-                increasing_force=increasing_force,
-                increasing_distance=increasing_distance,
-                decreasing_force=decreasing_force,
-                decreasing_distance=decreasing_distance,
+                forces_increasing=increasing_force,
+                distances_increasing=increasing_distance,
+                forces_decreasing=decreasing_force,
+                distances_decreasing=decreasing_distance,
                 force_maximum=force_maximum,
                 distance_minimum=distance_minimum,
             )
