@@ -21,13 +21,11 @@ repos:
   - repo: local
     hooks:
       - id: pylint
-        name: pylint
-        entry: pylint
+        args: ["--rcfile=.pylintrc"]
+        name: Pylint
+        entry: python -m pylint
         language: system
-        types: [python]
-        require_serial: true
-        args:
-          []
+        files: \.py$
   - repo: https://github.com/numpy/numpydoc
     rev: v1.10.0
     hooks:
