@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["uv_build>=0.10.6,<0.11.0"]
+build-backend = "uv_build"
 
 [project]
 name = "marker-analyser"
@@ -8,7 +8,7 @@ version = "0.1.0"
 requires-python = ">=3.11"
 description = "A package for loading and basic analysis of optical tweezer marker data."
 authors = [{ name = "Sylvia Whittle", email = "sylviwhittle@gmail.com" }]
-license = { file = "LICENSE" }
+license = { file = "LICENSE.md" }
 dependencies = [
     "pandas",
     "numpy",
@@ -16,6 +16,7 @@ dependencies = [
     "lumicks.pylake",
     "pydantic>=2.12.3",
     "ipywidgets",
+    "pylint>=4.0.2",
 ]
 readme = "README.md"
 
@@ -27,20 +28,6 @@ dev = [
     "pre-commit",
     "ruff>=0.14.2",
 ]
-
-[tool.black]
-line-length = 120
-target-version = ['py310']
-exclude = '''
-
-(
-/(
-    \.eggs         # exclude a few common directories in the
-    | \.git          # root of the project
-    | \.venv
-)/
-)
-'''
 
 [tool.ruff]
 exclude = [

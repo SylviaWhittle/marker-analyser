@@ -33,4 +33,3 @@ def test_extract_metadata_from_fd_curve_name_with_regex(
     """Test the test_extract_metadata_from_fd_curve_name_with_regex function."""
     metadata = extract_metadata_from_fd_curve_name_with_regex(curve_name, regex_pattern)
     assert metadata == expected_metadata
-    assert False
