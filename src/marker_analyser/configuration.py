@@ -1,8 +1,27 @@
 """Configuration models."""
 
-from typing import Self, Literal
+from enum import Enum
+
+from typing import Self
 
 from pydantic import BaseModel, model_validator, ValidationError
+
+FITTING_PARAMS = ["Lp", "Lc", "St", "f_offset", "kT"]
+
+
+class FitType(Enum):
+    """Enum to specify whether a fit is individual or global."""
+
+    INDIVIDUAL = "individual"
+    GLOBAL = "global"
+
+
+class FitSegment(Enum):
+    """Enum to track which segment of the data has been fitted."""
+
+    INCREASING = "increasing"
+    DECREASING = "decreasing"
+    BOTH = "both"
 
 
 class ParamConfig(BaseModel):
@@ -37,7 +56,7 @@ class FitConfig(BaseModel):
     auto_calculate_and_fix_f_offset: bool
     f_offset_auto_detect_distance_range_um: tuple[float, float] = (10, 12)
     model_name: str = "fit"
-    segment: Literal["increasing", "decreasing", "both"]
+    segment: FitSegment
 
     @model_validator(mode="after")
     def check_f_offset_not_global_if_auto_calculating(self) -> Self:
