@@ -3,7 +3,6 @@
 # pylint: disable=too-many-lines
 
 from pathlib import Path
-from enum import Enum
 
 import re
 from typing import Any, Generator
@@ -23,24 +22,7 @@ from skimage.morphology import label
 from marker_analyser.plotting import PALETTE
 from marker_analyser.parsers import extract_metadata_from_fd_curve_name_with_regex
 from marker_analyser.data_manipulation import create_df_from_uneven_data
-from marker_analyser.configuration import FitConfig
-
-FITTING_PARAMS = ["Lp", "Lc", "St", "f_offset", "kT"]
-
-
-class FitType(Enum):
-    """Enum to specify whether a fit is individual or global."""
-
-    INDIVIDUAL = 0
-    GLOBAL = 1
-
-
-class FitSegment(Enum):
-    """Enum to track which segment of the data has been fitted."""
-
-    INCREASING = "increasing"
-    DECREASING = "decreasing"
-    BOTH = "both"
+from marker_analyser.configuration import FitConfig, FitSegment, FitType, FITTING_PARAMS
 
 
 class MarkerAnalysisBaseModel(BaseModel):
@@ -267,7 +249,7 @@ class OscillationModel(MarkerAnalysisBaseModel):
         """
         printer.text(repr(self))
 
-    def get_segment(self, segment: str) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+    def get_segment(self, segment: FitSegment | str) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
         """
         Get the relevant segment of the oscillation data.
 
@@ -281,11 +263,13 @@ class OscillationModel(MarkerAnalysisBaseModel):
         tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]
             The distance and force data for the specified segment.
         """
-        if segment == "increasing":
+        # Accept either a FitSegment enum or a raw string for backward compatibility
+        segment_value = segment.value if isinstance(segment, FitSegment) else segment
+        if segment_value == "increasing":
             return self.distances_increasing, self.forces_increasing
-        if segment == "decreasing":
+        if segment_value == "decreasing":
             return self.distances_decreasing, self.forces_decreasing
-        if segment == "both":
+        if segment_value == "both":
             return self.distances_both, self.forces_both
         raise ValueError(f"Invalid segment: {segment}. Must be either 'increasing', 'decreasing', or 'both'.")
 
@@ -747,7 +731,7 @@ class OscillationCollection(MarkerAnalysisBaseModel):
         for oscillation_id, oscillation in self.oscillations.items():
             assert oscillation.fit_type == FitType.INDIVIDUAL
             assert oscillation.fit_segment is not None, f"Oscillation {oscillation_id} has no fit segment specified."
-            segment = oscillation.fit_segment.value
+            segment = oscillation.fit_segment
             assert oscillation.fit_params is not None, f"Oscillation {oscillation_id} has no fit parameters."
             fit_params = oscillation.fit_params
             assert oscillation.fit_individual_config is not None, f"Oscillation {oscillation_id} has no fit config."
@@ -760,7 +744,7 @@ class OscillationCollection(MarkerAnalysisBaseModel):
                 "oscillation_id": oscillation_id,
                 "curve_id": oscillation.curve_id,
                 "marker_filename": oscillation.marker_filename,
-                "segment": segment,
+                "segment": segment.value,
                 "fit_name": fit_name,
                 "fit_type": oscillation.fit_type.value,
                 "lp_value": fit_params["fit/Lp"].value,
@@ -780,6 +764,7 @@ class OscillationCollection(MarkerAnalysisBaseModel):
         df = pd.DataFrame(data_to_save)
         df.to_csv(file_path, index=False)
 
+    # pylint: disable=too-many-locals
     def global_fit_save_parameters_to_csv_file(self, file_path: Path) -> None:
         """
         Save the fitting parameters for the global fit of the collection to a CSV file.
@@ -793,6 +778,7 @@ class OscillationCollection(MarkerAnalysisBaseModel):
         assert self.fit_config is not None, "No fit config found for the collection."
         fit_name = self.fit_config.model_name
         fit_params = self.global_fit.params
+        fit_segment = self.fit_config.segment
 
         data_to_save = []
 
@@ -811,15 +797,14 @@ class OscillationCollection(MarkerAnalysisBaseModel):
                 global_params.append(param_string_name)
 
         for oscillation_id, oscillation in self.oscillations.items():
-            assert oscillation.fit_type is not None
-            fit_type = oscillation.fit_type.value
-            data_entry: dict[str, str | float | bool | int | None] = {
+            fit_type = FitType.GLOBAL
+            data_entry: dict[str, str | float | bool | int | FitType | None] = {
                 "oscillation_id": oscillation_id,
                 "curve_id": oscillation.curve_id,
                 "marker_filename": oscillation.marker_filename,
-                "segment": self.fit_config.segment,
+                "segment": fit_segment.value,
                 "fit_name": fit_name,
-                "fit_type": fit_type,
+                "fit_type": fit_type.value,
             }
             for param_string_name in global_params:
                 data_entry[f"{param_string_name}_value"] = fit_params[param_string_name].value
@@ -1050,6 +1035,11 @@ class OscillationCollection(MarkerAnalysisBaseModel):
 
         self.global_fit = fit
         self.fit_config = fit_config
+
+        # Set the fit type and segment for each oscillation
+        for oscillation_id, oscillation in self.oscillations.items():
+            oscillation.fit_type = FitType.GLOBAL
+            oscillation.fit_segment = fit_config.segment
 
 
 class ReducedFDCurveModel(MarkerAnalysisBaseModel):
