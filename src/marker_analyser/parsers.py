@@ -46,6 +46,11 @@ def extract_metadata_from_fd_curve_name_with_regex(
     dict[str, str | float | int | None]
         A dictionary containing the extracted metadata.
 
+    Raises
+    ------
+    ValueError
+        If the metadata cannot be loaded from the curve name.
+
     Examples
     --------
     >>> curve_name = "CuOda_10uM_M4_3"
@@ -83,8 +88,5 @@ def extract_metadata_from_fd_curve_name_with_regex(
             coerced_value = attempt_coerce_string_to_numbers(value)
             metadata[key] = coerced_value
     if missing_values:
-        print(
-            f"Warning: Missing values for keys {missing_values} in curve"
-            f" name '{curve_name}' with pattern '{regex_pattern}'"
-        )
+        raise ValueError(f"Metadata cannot be found in curve name: {curve_name} missing values: {missing_values}.")
     return metadata
