@@ -527,6 +527,7 @@ class OscillationModel(MarkerAnalysisBaseModel):
         model = pylake.ewlc_odijk_force(name=fit_name) + pylake.force_offset(name=fit_name)
         fit = pylake.FdFit(model)
 
+        # Get the correct segment data for fitting.
         segment = fit_config.segment
         distances, forces = self.get_segment(segment)
         fit.add_data(name="data", f=forces, d=distances)
@@ -572,6 +573,8 @@ class OscillationModel(MarkerAnalysisBaseModel):
             self.fitted_forces_decreasing = modelled_forces[len(self.forces_increasing) :]
         else:
             raise ValueError(f"Invalid segment: {segment}. Must be either 'increasing', 'decreasing', or 'both'.")
+        # We are fitting a single model to this oscillation, so set the fit type to individual.
+        self.fit_type = FitType.INDIVIDUAL
 
 
 class OscillationCollection(MarkerAnalysisBaseModel):
@@ -730,7 +733,9 @@ class OscillationCollection(MarkerAnalysisBaseModel):
         # format for csv: columns: oscillation_id, curve_id, marker_filename, lp_value ...
         data_to_save = []
         for oscillation_id, oscillation in self.oscillations.items():
-            assert oscillation.fit_type == FitType.INDIVIDUAL
+            assert (
+                oscillation.fit_type == FitType.INDIVIDUAL
+            ), f"Oscillation {oscillation_id} has fit type {oscillation.fit_type}, expected {FitType.INDIVIDUAL}."
             assert oscillation.fit_segment is not None, f"Oscillation {oscillation_id} has no fit segment specified."
             segment = oscillation.fit_segment
             assert oscillation.fit_params is not None, f"Oscillation {oscillation_id} has no fit parameters."
