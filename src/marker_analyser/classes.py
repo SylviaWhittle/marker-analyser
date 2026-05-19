@@ -746,9 +746,9 @@ class OscillationCollection(MarkerAnalysisBaseModel):
         # format for csv: columns: oscillation_id, curve_id, marker_filename, lp_value ...
         data_to_save = []
         for oscillation_id, oscillation in self.oscillations.items():
-            assert (
-                oscillation.fit_type == FitType.INDIVIDUAL
-            ), f"Oscillation {oscillation_id} has fit type {oscillation.fit_type}, expected {FitType.INDIVIDUAL}."
+            assert oscillation.fit_type == FitType.INDIVIDUAL, (
+                f"Oscillation {oscillation_id} has fit type {oscillation.fit_type}, expected {FitType.INDIVIDUAL}."
+            )
             assert oscillation.fit_segment is not None, f"Oscillation {oscillation_id} has no fit segment specified."
             segment = oscillation.fit_segment
             assert oscillation.fit_params is not None, f"Oscillation {oscillation_id} has no fit parameters."
