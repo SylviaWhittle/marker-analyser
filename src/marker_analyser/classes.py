@@ -255,8 +255,9 @@ class OscillationModel(MarkerAnalysisBaseModel):
 
         Parameters
         ----------
-        segment : str
-            The segment to get, either "increasing" or "decreasing" or "both".
+        segment : str | FitSegment
+            The segment to get, either "increasing", "decreasing", or "both", or the corresponding FitSegment
+            enum value.
 
         Returns
         -------
@@ -562,11 +563,11 @@ class OscillationModel(MarkerAnalysisBaseModel):
         self.fit_params = fit.params
         self.fit_error = np.mean(fit.sigma)
         modelled_forces: npt.NDArray[np.float64] = model(independent=distances, params=fit.params)
-        if segment == "increasing":
+        if segment == FitSegment.INCREASING:
             self.fitted_forces_increasing = modelled_forces
-        elif segment == "decreasing":
+        elif segment == FitSegment.DECREASING:
             self.fitted_forces_decreasing = modelled_forces
-        elif segment == "both":
+        elif segment == FitSegment.BOTH:
             self.fitted_forces_increasing = modelled_forces[: len(self.forces_increasing)]
             self.fitted_forces_decreasing = modelled_forces[len(self.forces_increasing) :]
         else:
@@ -835,7 +836,7 @@ class OscillationCollection(MarkerAnalysisBaseModel):
 
     # pylint: disable=too-many-branches
     def save_collection_data_to_csv_file(
-        self, file_path: Path, segment: str, fitted_or_measured: str = "measured"
+        self, file_path: Path, segment: str | FitSegment, fitted_or_measured: str = "measured"
     ) -> None:
         """
         Save the collection data to a CSV file.
@@ -844,15 +845,16 @@ class OscillationCollection(MarkerAnalysisBaseModel):
         ----------
         file_path : Path
             The path to the CSV file to save the data to.
-        segment : str
-            The segment to save, either "increasing" or "decreasing" or "both".
+        segment : str | FitSegment
+            The segment to save, either "increasing" or "decreasing" or "both" or the corresponding FitSegment
+            enum value.
         fitted_or_measured : str, optional
             The type of data to save, either "measured" or "fitted".
         """
 
         data_to_save = {}
         for oscillation_id, oscillation in self.oscillations.items():
-            if segment == "increasing":
+            if segment == "increasing" or segment == FitSegment.INCREASING:
                 if fitted_or_measured == "measured":
                     data_to_save[f"{oscillation_id}_increasing_distances"] = oscillation.distances_increasing
                     data_to_save[f"{oscillation_id}_increasing_forces"] = oscillation.forces_increasing
@@ -860,7 +862,7 @@ class OscillationCollection(MarkerAnalysisBaseModel):
                     assert oscillation.fitted_forces_increasing is not None
                     data_to_save[f"{oscillation_id}_increasing_distances"] = oscillation.distances_increasing
                     data_to_save[f"{oscillation_id}_increasing_fitted_forces"] = oscillation.fitted_forces_increasing
-            elif segment == "decreasing":
+            elif segment == "decreasing" or segment == FitSegment.DECREASING:
                 if fitted_or_measured == "measured":
                     data_to_save[f"{oscillation_id}_decreasing_distances"] = oscillation.distances_decreasing
                     data_to_save[f"{oscillation_id}_decreasing_forces"] = oscillation.forces_decreasing
@@ -868,7 +870,7 @@ class OscillationCollection(MarkerAnalysisBaseModel):
                     assert oscillation.fitted_forces_decreasing is not None
                     data_to_save[f"{oscillation_id}_decreasing_distances"] = oscillation.distances_decreasing
                     data_to_save[f"{oscillation_id}_decreasing_fitted_forces"] = oscillation.fitted_forces_decreasing
-            elif segment == "both":
+            elif segment == "both" or segment == FitSegment.BOTH:
                 if fitted_or_measured == "measured":
                     data_to_save[f"{oscillation_id}_both_distances"] = oscillation.distances_both
                     data_to_save[f"{oscillation_id}_both_forces"] = oscillation.forces_both
