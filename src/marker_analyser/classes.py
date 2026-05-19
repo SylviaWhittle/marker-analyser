@@ -1213,10 +1213,18 @@ class ReducedMarkerModel(MarkerAnalysisBaseModel):
             if verbose:
                 print(f"Loading curve {curve_id} with {len(curve_data.d.data)} data points")
             curve_name = curve_data.name
-            metadata = extract_metadata_from_fd_curve_name_with_regex(
-                curve_name=curve_name,
-                regex_pattern=metadata_regex,
-            )
+            try:
+                metadata = extract_metadata_from_fd_curve_name_with_regex(
+                    curve_name=curve_name,
+                    regex_pattern=metadata_regex,
+                )
+            except ValueError as e:
+                # Sometimes the metadata extraction can fail
+                if "Metadata cannot be found in curve name" in str(e):
+                    print(str(e))
+                    continue
+                raise e
+
             force_data: npt.NDArray[np.float64] = curve_data.f.data
             distance_data: npt.NDArray[np.float64] = np.asarray(curve_data.d.data, dtype=np.float64)
 
