@@ -469,6 +469,7 @@ class OscillationModel(MarkerAnalysisBaseModel):
         show: bool = True,
         increasing_segment: bool = True,
         decreasing_segment: bool = True,
+        show_data_points: bool = True,
         plot_label: str | None = None,
     ) -> None:
         """
@@ -486,21 +487,33 @@ class OscillationModel(MarkerAnalysisBaseModel):
             Whether to plot the increasing segment.
         decreasing_segment : bool, optional
             Whether to plot the decreasing segment.
+        show_data_points : bool, optional
+            Whether to show the data points (as opposed to just the fitted line if available).
         plot_label : str, optional
             The label to use for the plot legend.
         """
 
         if increasing_segment:
-            plt.plot(
-                self.distances_increasing, self.forces_increasing, color=increasing_colour, alpha=0.5, label=plot_label
-            )
+            if show_data_points:
+                plt.plot(
+                    self.distances_increasing,
+                    self.forces_increasing,
+                    color=increasing_colour,
+                    alpha=0.5,
+                    label=plot_label,
+                )
             # if there is fitted data, plot it
             if self.fitted_forces_increasing is not None:
                 plt.plot(self.distances_increasing, self.fitted_forces_increasing, color=increasing_colour, alpha=1)
         if decreasing_segment:
-            plt.plot(
-                self.distances_decreasing, self.forces_decreasing, color=decreasing_colour, alpha=0.5, label=plot_label
-            )
+            if show_data_points:
+                plt.plot(
+                    self.distances_decreasing,
+                    self.forces_decreasing,
+                    color=decreasing_colour,
+                    alpha=0.5,
+                    label=plot_label,
+                )
             if self.fitted_forces_decreasing is not None:
                 plt.plot(self.distances_decreasing, self.fitted_forces_decreasing, color=decreasing_colour, alpha=1)
         plt.xlabel("Distance (um)")
@@ -733,9 +746,9 @@ class OscillationCollection(MarkerAnalysisBaseModel):
         # format for csv: columns: oscillation_id, curve_id, marker_filename, lp_value ...
         data_to_save = []
         for oscillation_id, oscillation in self.oscillations.items():
-            assert oscillation.fit_type == FitType.INDIVIDUAL, (
-                f"Oscillation {oscillation_id} has fit type {oscillation.fit_type}, expected {FitType.INDIVIDUAL}."
-            )
+            assert (
+                oscillation.fit_type == FitType.INDIVIDUAL
+            ), f"Oscillation {oscillation_id} has fit type {oscillation.fit_type}, expected {FitType.INDIVIDUAL}."
             assert oscillation.fit_segment is not None, f"Oscillation {oscillation_id} has no fit segment specified."
             segment = oscillation.fit_segment
             assert oscillation.fit_params is not None, f"Oscillation {oscillation_id} has no fit parameters."
@@ -892,6 +905,7 @@ class OscillationCollection(MarkerAnalysisBaseModel):
         increasing_segment: bool = True,
         decreasing_segment: bool = True,
         random_colours: bool = False,
+        show_data_points: bool = True,
         legend: bool = True,
     ) -> None:
         """
@@ -905,6 +919,8 @@ class OscillationCollection(MarkerAnalysisBaseModel):
             Whether to plot the decreasing segment.
         random_colours : bool, optional
             Whether to use random colours for each oscillation.
+        show_data_points : bool, optional
+            Whether to show the data points (as opposed to just the fitted line if available).
         legend : bool, optional
             Whether to add a legend to the plot.
         """
@@ -918,6 +934,7 @@ class OscillationCollection(MarkerAnalysisBaseModel):
                     increasing_colour=colour,
                     decreasing_colour=colour,
                     plot_label=oscillation_id,
+                    show_data_points=show_data_points,
                 )
             else:
                 oscillation.plot(
@@ -925,6 +942,7 @@ class OscillationCollection(MarkerAnalysisBaseModel):
                     increasing_segment=increasing_segment,
                     decreasing_segment=decreasing_segment,
                     plot_label=oscillation_id,
+                    show_data_points=show_data_points,
                 )
         if legend:
             plt.legend(
